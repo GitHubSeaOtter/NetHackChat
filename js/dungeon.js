@@ -4,7 +4,8 @@
 // 特殊部屋: ショップ / モンスターハウス。宝箱・アイテム・敵を配置。
 // ============================================================
 
-const T_WALL = 0, T_FLOOR = 1, T_CORR = 2, T_STAIRS = 3;
+const T_WALL = 0, T_FLOOR = 1, T_CORR = 2, T_STAIRS = 3,
+      T_DOOR = 4, T_DOOR_OPEN = 5, T_SDOOR = 6; // T_SDOOR=隠しドア(見た目は壁)
 
 const ri = n => Math.floor(Math.random() * n);
 const pick = arr => arr[ri(arr.length)];
@@ -63,6 +64,18 @@ function makeItem(kind, depth) {
       const spec = cands[cands.length - 1 - ri(Math.min(2, cands.length))];
       return { id, kind, name: spec.name, emoji: '🛡️', bonus: spec.bonus, value: 70 * spec.bonus };
     }
+    case 'wand': {
+      const look = pick(WAND_LOOKS);
+      const spec = pickWandType();
+      return {
+        id, kind, name: `${look}杖`, emoji: '🪄',
+        wandType: spec.id, trueName: spec.name, known: false,
+        charges: 3 + ri(4), value: 120,
+      };
+    }
+    case 'tool': {
+      return { id, kind, name: 'ツルハシ', emoji: '⛏️', value: 80 };
+    }
     case 'chest': {
       return { id, kind, name: '宝箱', emoji: '📦', value: 0 };
     }
@@ -71,12 +84,14 @@ function makeItem(kind, depth) {
 
 function randomItemKind() {
   const r = Math.random();
-  if (r < 0.28) return 'potion';
-  if (r < 0.48) return 'scroll';
-  if (r < 0.62) return 'food';
-  if (r < 0.82) return 'gold';
-  if (r < 0.92) return 'weapon';
-  return 'armor';
+  if (r < 0.24) return 'potion';
+  if (r < 0.40) return 'scroll';
+  if (r < 0.52) return 'food';
+  if (r < 0.70) return 'gold';
+  if (r < 0.78) return 'weapon';
+  if (r < 0.85) return 'armor';
+  if (r < 0.95) return 'wand';
+  return 'tool';
 }
 
 // ---------- モンスター生成 ----------
@@ -100,7 +115,7 @@ function makeMonster(depth, typeId) {
     erratic: !!spec.erratic,
     peaceful: false,
     ally: false,
-    scared: 0,
+    scared: 0, sleep: 0,
     x: 0, y: 0,
   };
 }
@@ -109,7 +124,7 @@ function makeShopkeeper() {
   return {
     id: MON_SEQ++, typeId: 'keeper', name: '店主', emoji: '🧑‍💼',
     hp: 70, maxHp: 70, atk: 14, def: 5, xp: 120, drop: 1,
-    erratic: false, peaceful: true, ally: false, scared: 0, x: 0, y: 0,
+    erratic: false, peaceful: true, ally: false, scared: 0, sleep: 0, x: 0, y: 0,
   };
 }
 
@@ -134,6 +149,37 @@ function genLevel(depth) {
   }
   for (let i = 1; i < rooms.length; i++) {
     carveCorridor(t, w, roomCenter(rooms[i - 1]), roomCenter(rooms[i]));
+  }
+
+  // ドア設置: 部屋の周壁を貫く通路タイルのうち「戸口の形」
+  // (垂直か水平どちらか一方の軸だけ両側が壁)のものをドアにする
+  const tileOf = (x, y) => (x < 0 || y < 0 || x >= w || y >= h) ? T_WALL : t[y * w + x];
+  const isDoorway = (x, y) => {
+    const horizWalls = tileOf(x - 1, y) === T_WALL && tileOf(x + 1, y) === T_WALL;
+    const vertWalls = tileOf(x, y - 1) === T_WALL && tileOf(x, y + 1) === T_WALL;
+    return horizWalls !== vertWalls;
+  };
+  for (const r of rooms) {
+    const spots = [];
+    for (let x = r.x - 1; x <= r.x + r.w; x++) {
+      for (const y of [r.y - 1, r.y + r.h]) {
+        if (tileOf(x, y) === T_CORR && isDoorway(x, y)) spots.push({ x, y });
+      }
+    }
+    for (let y = r.y; y < r.y + r.h; y++) {
+      for (const x of [r.x - 1, r.x + r.w]) {
+        if (tileOf(x, y) === T_CORR && isDoorway(x, y)) spots.push({ x, y });
+      }
+    }
+    const doors = [];
+    for (const s of spots) {
+      if (Math.random() < 0.75) { t[s.y * w + s.x] = T_DOOR; doors.push(s); }
+    }
+    // 隠しドア: 出入口が2つ以上ある部屋に限って作る(閉じ込め防止)
+    if (doors.length >= 2 && Math.random() < 0.35) {
+      const s = pick(doors);
+      t[s.y * w + s.x] = T_SDOOR;
+    }
   }
 
   // 特殊部屋(開始部屋・階段部屋以外から選ぶ)
@@ -193,7 +239,7 @@ function genLevel(depth) {
     if (placeInRoom(r, keeper)) monsters.push(keeper);
     const n = 3 + ri(3);
     for (let i = 0; i < n; i++) {
-      const it = makeItem(pick(['potion', 'scroll', 'food', 'weapon', 'armor']), depth);
+      const it = makeItem(pick(['potion', 'scroll', 'food', 'weapon', 'armor', 'wand', 'tool']), depth);
       it.price = Math.round(it.value * (1.2 + Math.random() * 0.6));
       if (placeInRoom(r, it)) items.push(it);
     }

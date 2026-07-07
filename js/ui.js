@@ -13,6 +13,14 @@ const UI = (() => {
   let repeatTimer = null;
   let repeatDir = null;
   let holdTimer = null;
+  let pendingDirCb = null;    // 方向入力待ち(投げる・杖・掘る等)
+
+  // 方向指定が必要な行動のために、次の方向ボタン入力を横取りする
+  function requestDirection(label, cb) {
+    pendingDirCb = cb;
+    addMsg(`${label}(方向ボタンで指定 / 「・」でキャンセル)`, 'm-ai');
+    refresh();
+  }
 
   // ---------- 汎用 ----------
   function showModal(id) {
@@ -284,15 +292,36 @@ const UI = (() => {
         const vis = !!G.visible[idx];
         const t = G.level.t[idx];
         const px = sx * TILE, py = sy * TILE;
-        if (t === T_WALL) {
-          ctx.fillStyle = vis ? '#3c3c50' : '#232330';
-          ctx.fillRect(px + 1, py + 1, TILE - 2, TILE - 2);
+        if (t === T_WALL || t === T_SDOOR) {
+          // 石壁(茶系)— 隠しドアは見つけるまで壁と同じ見た目
+          ctx.fillStyle = vis ? '#6e5c46' : '#3a3226';
+          ctx.fillRect(px, py, TILE, TILE);
+          ctx.fillStyle = vis ? '#87735a' : '#463d2e';
+          ctx.fillRect(px, py, TILE, 4);
+          ctx.strokeStyle = '#241e14';
+          ctx.strokeRect(px + 0.5, py + 0.5, TILE - 1, TILE - 1);
         } else {
-          ctx.fillStyle = vis ? (t === T_CORR ? '#1c1c26' : '#22222e') : '#15151d';
+          // 床(青灰系)— 壁との明確なコントラスト
+          ctx.fillStyle = vis ? (t === T_CORR ? '#1d222d' : '#272e3c') : '#141821';
           ctx.fillRect(px + 1, py + 1, TILE - 2, TILE - 2);
+          if (vis && (t === T_FLOOR || t === T_DOOR_OPEN)) {
+            ctx.fillStyle = '#3c4454';
+            ctx.fillRect(px + TILE / 2 - 1, py + TILE / 2 - 1, 2, 2); // 床の目印ドット
+          }
           if (t === T_STAIRS) {
             ctx.fillStyle = vis ? '#e8c060' : '#7a6a40';
             ctx.fillText('▼', px + TILE / 2, py + TILE / 2 + 1);
+          }
+          if (t === T_DOOR) {
+            ctx.globalAlpha = vis ? 1 : 0.5;
+            ctx.fillText('🚪', px + TILE / 2, py + TILE / 2 + 1);
+            ctx.globalAlpha = 1;
+          }
+          if (t === T_DOOR_OPEN) {
+            // 開いたドア: 左右の茶色い戸柱
+            ctx.fillStyle = vis ? '#96702e' : '#4d3b1e';
+            ctx.fillRect(px + 1, py + 1, 4, TILE - 2);
+            ctx.fillRect(px + TILE - 5, py + 1, 4, TILE - 2);
           }
         }
       }
@@ -388,6 +417,14 @@ const UI = (() => {
       btn.addEventListener('pointerdown', e => {
         e.preventDefault();
         if (G.over || !$('busy').classList.contains('hidden')) return;
+        if (pendingDirCb) {
+          const cb = pendingDirCb;
+          pendingDirCb = null;
+          if (dir === 'wait') addMsg('やめておいた。');
+          else cb(dir);
+          refresh();
+          return;
+        }
         stepOnce(dir);
         holdTimer = setTimeout(() => startRepeat(dir), 320);
       });
@@ -446,24 +483,38 @@ const UI = (() => {
     wrap.innerHTML = '';
     const inv = G.player.inventory;
     if (!inv.length) wrap.innerHTML = '<p class="note">何も持っていない。</p>';
+    const sellable = canSellHere();
     inv.forEach((it, i) => {
       const row = document.createElement('div');
       row.className = 'inv-row';
       const name = document.createElement('span');
       name.className = 'inv-name';
       const eq = (it === G.player.weapon || it === G.player.armor) ? ' [装備中]' : '';
-      name.textContent = `${it.emoji} ${it.name}${eq}`;
-      const use = document.createElement('button');
-      use.textContent = it.kind === 'weapon' || it.kind === 'armor'
-        ? ((it === G.player.weapon || it === G.player.armor) ? '外す' : '装備')
-        : it.kind === 'scroll' ? '読む' : it.kind === 'food' ? '食べる' : '飲む';
-      use.onclick = async () => {
-        closeModals();
-        await useItem(i);
-        refresh();
-      };
+      name.textContent = `${it.emoji} ${itemLabel(it)}${eq}`;
       row.appendChild(name);
-      row.appendChild(use);
+
+      const btn = (label, fn, cls) => {
+        const b = document.createElement('button');
+        b.textContent = label;
+        if (cls) b.className = cls;
+        b.onclick = fn;
+        row.appendChild(b);
+      };
+      const useLabel =
+        it.kind === 'weapon' || it.kind === 'armor'
+          ? ((it === G.player.weapon || it === G.player.armor) ? '外す' : '装備')
+          : it.kind === 'scroll' ? '読む'
+          : it.kind === 'food' ? '食べる'
+          : it.kind === 'wand' ? '振る'
+          : it.kind === 'tool' ? '掘る'
+          : '飲む';
+      btn(useLabel, async () => { closeModals(); await useItem(i); refresh(); });
+      btn('投', () => { closeModals(); prepareTargeted('throw', i); refresh(); });
+      btn('捨', () => { closeModals(); dropItem(i); refresh(); });
+      if (sellable) {
+        const price = Math.max(3, Math.floor((it.value || 10) / 2));
+        btn(`売${price}G`, () => { closeModals(); sellItem(i); refresh(); });
+      }
       wrap.appendChild(row);
     });
     showModal('modal-inventory');
@@ -524,7 +575,7 @@ const UI = (() => {
 
   document.addEventListener('DOMContentLoaded', init);
 
-  return { refresh, showBusy, hideBusy };
+  return { refresh, showBusy, hideBusy, requestDirection };
 })();
 
 // ゲームエンジン(game.js)から window.UI 経由で再描画できるように公開する

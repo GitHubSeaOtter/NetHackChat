@@ -184,8 +184,8 @@ input, textarea {
   background: #26262e; border-radius: 10px; padding: 8px 10px;
   font-size: 14px;
 }
-.inv-row .inv-name { flex: 1; }
-.inv-row button { padding: 6px 12px; font-size: 13px; }
+.inv-row .inv-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inv-row button { padding: 6px 8px; font-size: 12px; flex-shrink: 0; }
 
 #info-body { font-size: 14px; line-height: 1.7; }
 #gameover-body { font-size: 14px; line-height: 1.8; }

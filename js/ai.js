@@ -21,7 +21,7 @@ const JUDGE_SCHEMA = {
   type: 'object',
   properties: {
     kind: { type: 'string', enum: ['command', 'special', 'invalid'] },
-    command: { type: 'string', enum: ['move', 'use_item', 'pickup', 'descend', 'open', 'search', 'wait', 'pray', 'none'] },
+    command: { type: 'string', enum: ['move', 'use_item', 'pickup', 'descend', 'open', 'close', 'search', 'wait', 'pray', 'throw', 'zap', 'drop', 'sell', 'kick', 'none'] },
     direction: { type: 'string', enum: ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw', 'none'] },
     item_index: { type: 'integer' },
     effects: { type: 'array', items: EFFECT_ITEM_SCHEMA },
@@ -63,10 +63,17 @@ const JUDGE_SYSTEM = `あなたはローグライクRPG「NetHackChat」のゲ�
 1. 入力が次の基本コマンドで表現できるなら kind="command" にし、該当する command と direction / item_index を設定する。
    - 移動、方向を指定した攻撃・体当たり: command="move"(direction を8方位で指定。移動先に敵がいれば攻撃になる)
    - アイテムを使う/飲む/読む/食べる/装備する: command="use_item"(item_index=所持品リストの番号)
+   - アイテムを投げる: command="throw"(item_index 必須。「北に投げる」のように方向が明示されていれば direction を設定し、無ければ "none" のままにする=ゲーム側がプレイヤーに方向入力を求める)
+   - 杖を振る/杖を使う([杖]タグのアイテム): command="zap"(item_index 必須。方向の扱いは throw と同じ)
+   - アイテムを捨てる/置く: command="drop"(item_index)
+   - 店でアイテムを売る: command="sell"(item_index)
    - 足元のアイテムを拾う/買う: command="pickup"
    - 階段を降りる: command="descend"
-   - 宝箱を開ける: command="open"
-   - 周囲や足元を調べる/探索する: command="search"
+   - 宝箱やドアを開ける: command="open"
+   - ドアを閉める: command="close"
+   - 蹴る(ドアを蹴破る・敵を蹴る): command="kick"(方向が明示されていれば direction)
+   - 周囲を調べる/隠しドアや隠し通路を探す: command="search"
+   - ツルハシで壁を掘る: command="use_item"(item_index=ツルハシの番号。方向はゲーム側が確認する)
    - 休む/待つ/様子を見る: command="wait"
    - 神に祈る: command="pray"
 2. 基本コマンドで表現できない創造的な行動(呪文を唱える、歌う、叫ぶ、踊る、脅す、交渉する、ペットを褒める等)は kind="special" にし、effects 配列(0〜2個)と narration を返す。
@@ -81,6 +88,9 @@ heal(HP回復) / damage_self(自分がダメージ) / damage_adjacent(隣接す�
 
 # 注意
 - 使わないフィールドには command="none", direction="none", item_index=-1, effects=[] を入れる。
+- 所持品リストの各行には [薬][巻物][武器][防具][食料][杖][道具] の種類タグが付いている。投げる・振る対象はこのタグと名前から item_index を選ぶ。
+- 投げる・振る・蹴るで方向が入力文に無い場合は direction="none" にすること(勝手に方向を決めない。ゲーム側が方向入力を求める)。
+- アイテムを消費・投擲する行動は必ず対応する command を使うこと(kind="special" の effects でアイテム効果を再現しない。消費や対象の判定はゲーム側が行う)。
 - narration は必ず日本語で書く。`;
 
 const ITEM_SYSTEM = `あなたはローグライクRPG「NetHackChat」のアイテム効果判定AIです。プレイヤーが未識別のアイテムを使用しました。アイテムの見た目・種類と現在の状況から、ふさわしい効果を1つ選び、JSONで返します。

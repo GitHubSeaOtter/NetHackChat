@@ -18,6 +18,27 @@ const MONSTER_TYPES = [
 const POTION_LOOKS = ['赤い', '青い', '緑の', '黄色い', '紫の', '乳白色の', '黒い', '虹色の', '泡立つ', '濁った'];
 const SCROLL_LABELS = ['ZELGO MER', 'JUYED AWK', 'PRATYAVAYAH', 'DAIYEN FOOELS', 'LEP GEX', 'VE FORBRYDERNE', 'HACKEM MUCHE', 'READ ME'];
 
+// 魔法の杖(振るまで正体不明。効果は方向指定で決定論的に解決する)
+const WAND_LOOKS = ['樫の', 'アルミの', 'ガラスの', '銀の', '曲がりくねった', '宝石飾りの', '鉄の', '短い'];
+const WAND_TYPES = [
+  { id: 'striking', name: '打撃の杖',     w: 30 },
+  { id: 'sleep',    name: '眠りの杖',     w: 20 },
+  { id: 'fire',     name: '炎の杖',       w: 15 },
+  { id: 'digging',  name: '穴掘りの杖',   w: 20 },
+  { id: 'teleport', name: '瞬間移動の杖', w: 15 },
+];
+function pickWandType() {
+  const total = WAND_TYPES.reduce((s, t) => s + t.w, 0);
+  let r = Math.random() * total;
+  for (const t of WAND_TYPES) { r -= t.w; if (r <= 0) return t; }
+  return WAND_TYPES[0];
+}
+
+const KIND_LABELS = {
+  potion: '薬', scroll: '巻物', weapon: '武器', armor: '防具',
+  food: '食料', wand: '杖', tool: '道具', gold: '金貨', chest: '宝箱',
+};
+
 const WEAPONS = [
   { name: 'ダガー',         bonus: 1, minDepth: 1 },
   { name: 'ショートソード', bonus: 2, minDepth: 2 },

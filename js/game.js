@@ -72,7 +72,15 @@ function placeAdjacent(unit, x, y) {
 // ---------- 参照ヘルパー ----------
 function inBounds(x, y) { return x >= 0 && y >= 0 && x < G.level.w && y < G.level.h; }
 function tileAt(x, y) { return inBounds(x, y) ? G.level.t[y * G.level.w + x] : T_WALL; }
-function walkable(x, y) { return tileAt(x, y) !== T_WALL; }
+function setTile(x, y, t) { if (inBounds(x, y)) G.level.t[y * G.level.w + x] = t; }
+function walkable(x, y) {
+  const t = tileAt(x, y);
+  return t !== T_WALL && t !== T_DOOR && t !== T_SDOOR; // 閉じたドア・隠しドアは通れない
+}
+function opaque(x, y) {
+  const t = tileAt(x, y);
+  return t === T_WALL || t === T_DOOR || t === T_SDOOR; // 視線を遮る
+}
 function monsterAt(x, y) { return G.level.monsters.find(m => m.x === x && m.y === y); }
 function itemsAt(x, y) { return G.level.items.filter(i => i.x === x && i.y === y); }
 function unitAt(x, y) {
@@ -106,7 +114,7 @@ function los(x0, y0, x1, y1) {
   let err = dx - dy, x = x0, y = y0;
   while (true) {
     if (x === x1 && y === y1) return true;
-    if (!(x === x0 && y === y0) && tileAt(x, y) === T_WALL) return false;
+    if (!(x === x0 && y === y0) && opaque(x, y)) return false;
     const e2 = 2 * err;
     if (e2 > -dy) { err -= dy; x += sx; }
     if (e2 < dx) { err += dx; y += sy; }
@@ -144,6 +152,12 @@ function tryStep(dx, dy) {
     [p.x, p.y] = [nx, ny];
     addMsg(`${G.pet.name}と入れ替わった。`);
     onEnterTile(); endTurn(); return true;
+  }
+  if (tileAt(nx, ny) === T_DOOR) {
+    setTile(nx, ny, T_DOOR_OPEN);
+    addMsg('ドアを開けた。');
+    endTurn();
+    return true;
   }
   if (!walkable(nx, ny)) return false;
   p.x = nx; p.y = ny;
@@ -187,6 +201,7 @@ function meleeAttack(m) {
 
 function damageMonster(m, dmg, srcName) {
   m.hp -= dmg;
+  m.sleep = 0; // 攻撃されると目を覚ます
   if (m.hp <= 0) {
     addMsg(`${srcName}は${m.name}を倒した!`, 'm-good');
     killMonster(m);
@@ -256,10 +271,37 @@ function doDescend() {
   if (window.UI) UI.refresh();
 }
 
+function adjacentTiles(pred) {
+  const out = [];
+  for (const k of Object.keys(DIRS)) {
+    const [dx, dy] = DIRS[k];
+    const x = G.player.x + dx, y = G.player.y + dy;
+    if (pred(tileAt(x, y))) out.push({ dir: k, x, y });
+  }
+  return out;
+}
+
 function doOpen() {
   if (G.over) return;
   const chest = itemsAt(G.player.x, G.player.y).find(i => i.kind === 'chest');
-  if (!chest) { addMsg('ここに開けられる物はない。'); return; }
+  if (!chest) {
+    const doors = adjacentTiles(t => t === T_DOOR);
+    if (doors.length === 1) {
+      setTile(doors[0].x, doors[0].y, T_DOOR_OPEN);
+      addMsg('ドアを開けた。');
+      endTurn(); return;
+    }
+    if (doors.length > 1) {
+      if (window.UI) UI.requestDirection('どのドアを開ける?', d => {
+        const s = doors.find(o => o.dir === d);
+        if (s) { setTile(s.x, s.y, T_DOOR_OPEN); addMsg('ドアを開けた。'); endTurn(); }
+        else addMsg('そちらにドアはない。');
+        if (window.UI) UI.refresh();
+      });
+      return;
+    }
+    addMsg('ここに開けられる物はない。'); return;
+  }
   removeItem(chest);
   if (Math.random() < 0.15) {
     const dmg = 3 + Math.floor(Math.random() * G.depth * 2);
@@ -281,14 +323,82 @@ function doOpen() {
 
 function doSearch() {
   if (G.over) return;
-  if (Math.random() < 0.15) {
-    const g = 3 + Math.floor(Math.random() * 10);
-    G.player.gold += g;
-    addMsg(`床の隙間から${g}枚の金貨を見つけた!`, 'm-good');
-  } else {
-    addMsg('周囲を調べたが、何も見つからなかった。');
+  // 隠しドアの探索(NetHackの s コマンド相当)
+  let found = false;
+  for (const s of adjacentTiles(t => t === T_SDOOR)) {
+    if (Math.random() < 0.45) {
+      setTile(s.x, s.y, T_DOOR);
+      addMsg(`${DIR_NAMES[s.dir]}の壁に隠しドアを発見した!`, 'm-good');
+      found = true;
+    }
+  }
+  if (!found) {
+    if (Math.random() < 0.15) {
+      const g = 3 + Math.floor(Math.random() * 10);
+      G.player.gold += g;
+      addMsg(`床の隙間から${g}枚の金貨を見つけた!`, 'm-good');
+    } else {
+      addMsg('周囲を調べたが、何も見つからなかった。');
+    }
   }
   endTurn();
+}
+
+function doClose() {
+  if (G.over) return;
+  const doors = adjacentTiles(t => t === T_DOOR_OPEN);
+  if (!doors.length) { addMsg('閉められるドアが近くにない。'); return; }
+  const closeAt = s => {
+    if (unitAt(s.x, s.y) || itemsAt(s.x, s.y).length) { addMsg('何かがつっかえていて閉まらない。'); return; }
+    setTile(s.x, s.y, T_DOOR);
+    addMsg('ドアを閉めた。');
+    endTurn();
+  };
+  if (doors.length === 1) { closeAt(doors[0]); return; }
+  if (window.UI) UI.requestDirection('どのドアを閉める?', d => {
+    const s = doors.find(o => o.dir === d);
+    if (s) closeAt(s); else addMsg('そちらにドアはない。');
+    if (window.UI) UI.refresh();
+  });
+}
+
+function doKick(dirKey) {
+  if (G.over) return;
+  const run = d => {
+    const [dx, dy] = DIRS[d];
+    const x = G.player.x + dx, y = G.player.y + dy;
+    const m = monsterAt(x, y);
+    if (m) {
+      if (m.peaceful && m.typeId === 'keeper') { m.peaceful = false; addMsg('店主が激怒した! 「泥棒め!!」', 'm-warn'); }
+      m.sleep = 0;
+      damageMonster(m, Math.max(1, 2 + Math.floor(G.char.stats.str / 4) - m.def), 'キック');
+      endTurn(); return;
+    }
+    const t = tileAt(x, y);
+    if (t === T_DOOR) {
+      if (Math.random() < 0.5) {
+        setTile(x, y, T_DOOR_OPEN);
+        addMsg('バキッ! ドアを蹴破った!', 'm-good');
+      } else {
+        addMsg('ドアはびくともしない。つま先が痛い…', 'm-warn');
+        G.player.hp -= 1;
+        checkDeath('ドアへのキック');
+      }
+      if (!G.over) endTurn(); return;
+    }
+    const chest = itemsAt(x, y).find(i => i.kind === 'chest');
+    if (chest) { addMsg('宝箱を蹴った。ゴトッと音がしただけだった。'); endTurn(); return; }
+    if (t === T_WALL || t === T_SDOOR) {
+      addMsg('壁を思い切り蹴った。痛い!!', 'm-warn');
+      G.player.hp -= 2;
+      if (!checkDeath('壁へのキック')) endTurn();
+      return;
+    }
+    addMsg('空を蹴った。バランスを崩しそうになった。');
+    endTurn();
+  };
+  if (dirKey && DIRS[dirKey]) run(dirKey);
+  else if (window.UI) UI.requestDirection('どの方向を蹴る?', d => { run(d); if (window.UI) UI.refresh(); });
 }
 
 function doPray() {
@@ -306,6 +416,209 @@ function doPray() {
     addMsg('神は汝を憐れんだ。全身が光に包まれ、傷が癒えた!', 'm-good');
   } else {
     addMsg('あなたは祈った。空気がわずかに温かくなった気がする。');
+  }
+  endTurn();
+}
+
+// ---------- アイテム補助 ----------
+function itemLabel(it) {
+  let base = it.name;
+  if (it.kind === 'wand') base = `${it.known ? it.trueName : it.name}(残り${it.charges}回)`;
+  return base;
+}
+
+function unequipIfEquipped(it) {
+  if (G.player.weapon === it) G.player.weapon = null;
+  if (G.player.armor === it) G.player.armor = null;
+}
+
+function canSellHere() {
+  const room = roomAt(G.player.x, G.player.y);
+  if (!room || room.type !== 'shop') return false;
+  return G.level.monsters.some(m => m.typeId === 'keeper' && m.peaceful);
+}
+
+// ---------- 捨てる ----------
+function dropItem(idx) {
+  if (G.over) return;
+  const it = G.player.inventory[idx];
+  if (!it) { addMsg('そのアイテムは持っていない。'); return; }
+  unequipIfEquipped(it);
+  G.player.inventory.splice(idx, 1);
+  it.x = G.player.x; it.y = G.player.y;
+  G.level.items.push(it);
+  addMsg(`${itemLabel(it)}を足元に置いた。`);
+  endTurn();
+}
+
+// ---------- 売る(ショップ内のみ) ----------
+function sellItem(idx) {
+  if (G.over) return;
+  if (!canSellHere()) { addMsg('ここでは売れない。店主のいる店の中で売ろう。'); return; }
+  const it = G.player.inventory[idx];
+  if (!it) { addMsg('そのアイテムは持っていない。'); return; }
+  const price = Math.max(3, Math.floor((it.value || 10) / 2));
+  unequipIfEquipped(it);
+  G.player.inventory.splice(idx, 1);
+  G.player.gold += price;
+  // 売った品は店の商品として床に並ぶ
+  it.price = Math.max(5, Math.round((it.value || 10) * 1.4));
+  it.x = G.player.x; it.y = G.player.y;
+  G.level.items.push(it);
+  addMsg(`${itemLabel(it)}を${price}Gで売った。「いい品だね、まいど!」`, 'm-good');
+  endTurn();
+}
+
+// ---------- 方向指定つき行動(投げる/杖を振る/掘る) ----------
+// 自由入力で方向の指示が無い場合は、UI側の方向ボタン入力で指定させる
+function prepareTargeted(kind, idx, dirKey) {
+  const it = G.player.inventory[idx];
+  if (!it) { addMsg('そのアイテムは持っていない。'); return; }
+  if (kind === 'zap' && it.kind !== 'wand') { addMsg(`${itemLabel(it)}は振っても何も起きなさそうだ。`); return; }
+  if (kind === 'dig' && it.kind !== 'tool') { addMsg('それでは掘れない。'); return; }
+  const run = d => {
+    const i = G.player.inventory.indexOf(it);
+    if (i < 0) { addMsg('そのアイテムはもう手元にない。'); return; }
+    if (kind === 'throw') throwItem(i, d);
+    else if (kind === 'zap') zapWand(i, d);
+    else digDir(d);
+    if (window.UI) UI.refresh();
+  };
+  if (dirKey && dirKey !== 'none' && DIRS[dirKey]) { run(dirKey); return; }
+  const labels = { throw: `${itemLabel(it)}をどの方向に投げる?`, zap: `${itemLabel(it)}をどの方向に振る?`, dig: 'どの方向を掘る?' };
+  if (window.UI) UI.requestDirection(labels[kind], run);
+}
+
+// ---------- 投げる ----------
+function throwItem(idx, dirKey) {
+  if (G.over) return;
+  const p = G.player;
+  const it = p.inventory[idx];
+  if (!it) { addMsg('そのアイテムは持っていない。'); return; }
+  unequipIfEquipped(it);
+  p.inventory.splice(idx, 1); // 消費(手元から確実に離れる)
+  const [dx, dy] = DIRS[dirKey];
+  let x = p.x, y = p.y, hit = null, hitPet = false;
+  for (let i = 0; i < 6; i++) {
+    const nx = x + dx, ny = y + dy;
+    if (!walkable(nx, ny)) break;
+    x = nx; y = ny;
+    const m = monsterAt(x, y);
+    if (m) { hit = m; break; }
+    if (G.pet.alive && G.pet.x === x && G.pet.y === y) { hitPet = true; break; }
+  }
+  addMsg(`${itemLabel(it)}を${DIR_NAMES[dirKey]}へ投げた。`);
+  if (hit) {
+    if (hit.peaceful && hit.typeId === 'keeper') { hit.peaceful = false; addMsg('店主が激怒した! 「泥棒め!!」', 'm-warn'); }
+    hit.sleep = 0;
+    let dmg = 1;
+    if (it.kind === 'weapon') dmg = 3 + it.bonus * 2 + Math.floor(G.char.stats.str / 4);
+    else if (it.kind === 'potion') dmg = 2;
+    damageMonster(hit, dmg, '投擲');
+  } else if (hitPet) {
+    addMsg(`わっ! ${G.pet.name}が慌てて飛びのいた。`);
+  } else {
+    addMsg('何にも当たらなかった。');
+  }
+  if (it.kind === 'potion') {
+    addMsg('薬瓶は砕け散った。');
+  } else {
+    it.x = x; it.y = y;
+    G.level.items.push(it); // 落下地点に残る
+  }
+  endTurn();
+}
+
+// ---------- 杖を振る(効果対象は方向から決定論的に解決) ----------
+function beamTiles(dx, dy, range) {
+  const tiles = [];
+  let x = G.player.x, y = G.player.y;
+  for (let i = 0; i < range; i++) {
+    x += dx; y += dy;
+    if (!inBounds(x, y) || opaque(x, y)) break;
+    tiles.push({ x, y });
+  }
+  return tiles;
+}
+
+function zapWand(idx, dirKey) {
+  if (G.over) return;
+  const it = G.player.inventory[idx];
+  if (!it || it.kind !== 'wand') { addMsg('それは杖ではない。'); return; }
+  if (it.charges <= 0) {
+    addMsg(`${itemLabel(it)}を振ったが、うんともすんとも言わない。使い切ったようだ。`);
+    endTurn(); return;
+  }
+  it.charges--;
+  const [dx, dy] = DIRS[dirKey];
+  addMsg(`${it.known ? it.trueName : it.name}を${DIR_NAMES[dirKey]}へ振った。`);
+  if (!it.known) { it.known = true; addMsg(`(それは${it.trueName}だった!)`, 'm-good'); }
+  const angerIfKeeper = m => {
+    if (m.peaceful && m.typeId === 'keeper') { m.peaceful = false; addMsg('店主が激怒した!', 'm-warn'); }
+  };
+  switch (it.wandType) {
+    case 'striking': {
+      const m = beamTiles(dx, dy, 7).map(t => monsterAt(t.x, t.y)).find(Boolean);
+      if (m) { angerIfKeeper(m); m.sleep = 0; damageMonster(m, 10 + Math.floor(Math.random() * 8), '魔力の一撃'); }
+      else addMsg('魔力の弾は何にも当たらず消えた。');
+      break;
+    }
+    case 'sleep': {
+      const m = beamTiles(dx, dy, 7).map(t => monsterAt(t.x, t.y)).find(Boolean);
+      if (m) { m.sleep = 6 + Math.floor(Math.random() * 6); addMsg(`${m.name}はぐっすり眠り込んだ!`, 'm-good'); }
+      else addMsg('眠りの光は虚空に消えた。');
+      break;
+    }
+    case 'fire': {
+      const targets = beamTiles(dx, dy, 7).map(t => monsterAt(t.x, t.y)).filter(Boolean);
+      addMsg('杖の先から炎の奔流がほとばしった!', 'm-warn');
+      for (const m of targets) { angerIfKeeper(m); m.sleep = 0; damageMonster(m, 7 + Math.floor(Math.random() * 6), '炎'); }
+      if (!targets.length) addMsg('炎は誰も焼かずに消えた。');
+      break;
+    }
+    case 'digging': {
+      let x = G.player.x, y = G.player.y, dug = 0;
+      for (let i = 0; i < 6; i++) {
+        x += dx; y += dy;
+        if (!digTile(x, y) && !walkable(x, y)) break;
+        if (tileAt(x, y) === T_CORR) dug++;
+      }
+      addMsg(dug ? '土煙とともに壁が崩れ、道ができた!' : '掘れるものが無かった。');
+      break;
+    }
+    case 'teleport': {
+      const m = beamTiles(dx, dy, 7).map(t => monsterAt(t.x, t.y)).find(Boolean);
+      if (m) {
+        for (let k = 0; k < 200; k++) {
+          const tx = 1 + Math.floor(Math.random() * (G.level.w - 2));
+          const ty = 1 + Math.floor(Math.random() * (G.level.h - 2));
+          if (walkable(tx, ty) && !unitAt(tx, ty)) { m.x = tx; m.y = ty; break; }
+        }
+        addMsg(`${m.name}の姿がかき消えた!`, 'm-good');
+      } else addMsg('光は誰にも当たらなかった。');
+      break;
+    }
+  }
+  endTurn();
+}
+
+// ---------- 掘る(ツルハシ / 穴掘りの杖) ----------
+function digTile(x, y) {
+  if (x <= 0 || y <= 0 || x >= G.level.w - 1 || y >= G.level.h - 1) return false; // 外周は掘れない
+  const t = tileAt(x, y);
+  if (t === T_WALL || t === T_SDOOR || t === T_DOOR) { setTile(x, y, T_CORR); return true; }
+  return false;
+}
+
+function digDir(dirKey) {
+  if (G.over) return;
+  const [dx, dy] = DIRS[dirKey];
+  const x = G.player.x + dx, y = G.player.y + dy;
+  if (digTile(x, y)) {
+    addMsg(`ツルハシで${DIR_NAMES[dirKey]}の壁を掘り抜いた!`, 'm-good');
+  } else {
+    addMsg('そこは掘れない。');
+    return;
   }
   endTurn();
 }
@@ -334,6 +647,8 @@ async function useItem(idx) {
     addMsg(`${it.name}を食べた。おいしい! HPが${heal}回復した。`, 'm-good');
     endTurn(); return;
   }
+  if (it.kind === 'wand') { prepareTargeted('zap', idx); return; }
+  if (it.kind === 'tool') { prepareTargeted('dig', idx); return; }
 
   // ポーション・巻物: AIが効果を判定
   let res;
@@ -488,9 +803,27 @@ async function handleFreeform(text) {
       case 'pickup': doPickup(); break;
       case 'descend': doDescend(); break;
       case 'open': doOpen(); break;
+      case 'close': doClose(); break;
       case 'search': doSearch(); break;
       case 'wait': doWait(); break;
       case 'pray': doPray(); break;
+      case 'kick': doKick(r.direction !== 'none' ? r.direction : null); break;
+      case 'throw':
+        if (r.item_index >= 0 && r.item_index < G.player.inventory.length) prepareTargeted('throw', r.item_index, r.direction);
+        else addMsg('どのアイテムを投げるのか分からなかった。');
+        break;
+      case 'zap':
+        if (r.item_index >= 0 && r.item_index < G.player.inventory.length) prepareTargeted('zap', r.item_index, r.direction);
+        else addMsg('どの杖を振るのか分からなかった。');
+        break;
+      case 'drop':
+        if (r.item_index >= 0 && r.item_index < G.player.inventory.length) dropItem(r.item_index);
+        else addMsg('どのアイテムを捨てるのか分からなかった。');
+        break;
+      case 'sell':
+        if (r.item_index >= 0 && r.item_index < G.player.inventory.length) sellItem(r.item_index);
+        else addMsg('どのアイテムを売るのか分からなかった。');
+        break;
       default: addMsg(r.narration || 'うまく行動に移せなかった。', 'm-ai');
     }
   } else if (r.kind === 'special') {
@@ -517,11 +850,14 @@ function stateSummary() {
   const vis = hostiles().filter(m => isVisible(m.x, m.y) && dist(m, p) > 1);
   lines.push(`見えている敵: ${vis.length ? vis.map(m => m.name).join('、') : 'なし'}`);
   lines.push(`ペット: ${G.pet.alive ? `${G.pet.name}(HP ${G.pet.hp}/${G.pet.maxHp})` : '倒れてしまった'}`);
-  lines.push('所持品:');
+  const doors = adjacentTiles(t => t === T_DOOR).map(s => DIR_NAMES[s.dir]);
+  if (doors.length) lines.push(`閉じたドア: ${doors.join('、')}にある`);
+  if (canSellHere()) lines.push('(店の中なので sell でアイテムを売れる)');
+  lines.push('所持品(各行の[ ]は種類):');
   if (!p.inventory.length) lines.push('(なし)');
   p.inventory.forEach((it, i) => {
     const eq = (it === p.weapon || it === p.armor) ? '(装備中)' : '';
-    lines.push(`${i}: ${it.name}${eq}`);
+    lines.push(`${i}: ${itemLabel(it)} [${KIND_LABELS[it.kind] || it.kind}]${eq}`);
   });
   return lines.join('\n');
 }
@@ -607,6 +943,7 @@ function attackPet(m) {
 }
 
 function monsterAct(m) {
+  if (m.sleep > 0) { m.sleep--; return; }
   if (m.peaceful) return;
   const p = G.player;
   if (m.scared > 0) { m.scared--; stepAway(m, p.x, p.y); return; }
@@ -682,7 +1019,12 @@ function tileDescription(x, y) {
   if (!G.explored[idx]) return 'まだ見えていない場所。';
   const lines = [];
   const t = tileAt(x, y);
-  lines.push(t === T_WALL ? '🧱 壁' : t === T_STAIRS ? '🔻 下り階段' : t === T_CORR ? '通路' : '部屋の床');
+  lines.push(
+    (t === T_WALL || t === T_SDOOR) ? '🧱 壁' : // 隠しドアは見つけるまで壁として表示
+    t === T_STAIRS ? '🔻 下り階段' :
+    t === T_DOOR ? '🚪 閉じたドア' :
+    t === T_DOOR_OPEN ? '開いたドア' :
+    t === T_CORR ? '通路' : '部屋の床');
   const room = roomAt(x, y);
   if (room && room.announced) {
     if (room.type === 'shop') lines.push('🏪 ここは店の中。値札付きの商品は購入が必要。');
