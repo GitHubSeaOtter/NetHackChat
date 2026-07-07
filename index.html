@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>NetHackChat</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ========== スタート画面(キャラクター選択) ========== -->
+<div id="screen-start" class="screen">
+  <header class="start-header">
+    <h1>NetHackChat</h1>
+    <p class="subtitle">AIと遊ぶローグライク</p>
+  </header>
+  <div id="char-list"></div>
+  <div class="start-buttons">
+    <button id="btn-new-char" class="primary">＋ 新しいキャラクターを作る</button>
+    <button id="btn-settings">⚙️ 設定(APIキー / モデル)</button>
+  </div>
+  <input type="file" id="char-image-input" accept="image/*" hidden>
+</div>
+
+<!-- ========== ゲーム画面 ========== -->
+<div id="screen-game" class="screen hidden">
+  <div id="stats-bar">
+    <span id="stat-text"></span>
+    <button id="btn-edit-char" title="名前と性格を編集">✏️</button>
+    <button id="btn-quit" title="冒険をやめる">🏳️</button>
+  </div>
+  <div id="log"></div>
+  <div id="canvas-wrap"><canvas id="canvas"></canvas></div>
+  <div id="controls">
+    <div id="dpad">
+      <button data-dir="nw">↖</button><button data-dir="n">↑</button><button data-dir="ne">↗</button>
+      <button data-dir="w">←</button><button data-dir="wait">・</button><button data-dir="e">→</button>
+      <button data-dir="sw">↙</button><button data-dir="s">↓</button><button data-dir="se">↘</button>
+    </div>
+    <div id="action-buttons">
+      <button id="btn-pickup">拾う</button>
+      <button id="btn-inventory">持ち物</button>
+      <button id="btn-open">開ける</button>
+      <button id="btn-descend">降りる</button>
+      <button id="btn-search">調べる</button>
+    </div>
+  </div>
+  <div id="freeform-bar">
+    <input id="freeform" type="text" placeholder="自由入力(例: 大声で歌う / 剣を構えて突撃)" autocomplete="off">
+    <button id="btn-freeform">送る</button>
+  </div>
+</div>
+
+<!-- ========== モーダル ========== -->
+<div id="modal-backdrop" class="hidden"></div>
+
+<div id="modal-settings" class="modal hidden">
+  <h2>設定</h2>
+  <label>Claude APIキー(この端末にのみ保存されます)</label>
+  <input id="input-apikey" type="password" placeholder="sk-ant-...">
+  <label>行動・アイテム判定モデル(高頻度・低コスト推奨)</label>
+  <input id="input-model-judge" type="text">
+  <label>画像キャラ生成モデル(画像解析対応が必要)</label>
+  <input id="input-model-vision" type="text">
+  <label>フォールバックモデル</label>
+  <input id="input-model-fallback" type="text">
+  <p class="note">推奨: 判定=claude-haiku-4-5 / 画像=claude-sonnet-5。APIキーは localStorage にのみ保存され、Anthropic API 以外には送信されません。</p>
+  <div class="modal-buttons">
+    <button id="btn-settings-save" class="primary">保存</button>
+    <button class="btn-close">閉じる</button>
+  </div>
+</div>
+
+<div id="modal-newchar" class="modal hidden">
+  <h2>キャラクター作成</h2>
+  <p>外見の画像を選ぶと、AIが名前・性格・能力値を生成します。</p>
+  <div class="modal-buttons vertical">
+    <button id="btn-char-from-image" class="primary">📷 カメラロールから画像を選ぶ</button>
+    <button id="btn-char-random">🎲 画像なしで作る(ランダム生成)</button>
+    <button class="btn-close">やめる</button>
+  </div>
+</div>
+
+<div id="modal-edit" class="modal hidden">
+  <h2 id="edit-title">キャラクター</h2>
+  <div id="edit-thumb-wrap"></div>
+  <label>名前</label>
+  <input id="edit-name" type="text" maxlength="20">
+  <label>性格</label>
+  <textarea id="edit-personality" rows="3" maxlength="200"></textarea>
+  <div id="edit-stats" class="note"></div>
+  <div class="modal-buttons">
+    <button id="btn-edit-save" class="primary">保存</button>
+    <button id="btn-edit-delete" class="danger hidden">削除</button>
+    <button class="btn-close">閉じる</button>
+  </div>
+</div>
+
+<div id="modal-inventory" class="modal hidden">
+  <h2>持ち物</h2>
+  <div id="inventory-list"></div>
+  <div class="modal-buttons">
+    <button class="btn-close">閉じる</button>
+  </div>
+</div>
+
+<div id="modal-info" class="modal hidden">
+  <h2>マスの情報</h2>
+  <div id="info-body"></div>
+  <div class="modal-buttons">
+    <button class="btn-close">閉じる</button>
+  </div>
+</div>
+
+<div id="modal-gameover" class="modal hidden">
+  <h2 id="gameover-title">ゲームオーバー</h2>
+  <div id="gameover-body"></div>
+  <div class="modal-buttons">
+    <button id="btn-gameover-back" class="primary">キャラクター選択へ</button>
+  </div>
+</div>
+
+<div id="busy" class="hidden"><div class="spinner"></div><span id="busy-text">AIが考えています…</span></div>
+
+<script src="js/config.js"></script>
+<script src="js/api.js"></script>
+<script src="js/data.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/dungeon.js"></script>
+<script src="js/game.js"></script>
+<script src="js/ui.js"></script>
+</body>
+</html>
