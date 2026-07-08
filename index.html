@@ -26,10 +26,22 @@
 
 <!-- ========== ゲーム画面 ========== -->
 <div id="screen-game" class="screen hidden">
-  <div id="stats-bar">
-    <span id="stat-text"></span>
-    <button id="btn-edit-char" title="名前と性格を編集">✏️</button>
-    <button id="btn-quit" title="冒険をやめる">🏳️</button>
+  <div id="hud">
+    <div id="hud-row1">
+      <span id="hud-name">冒険者</span>
+      <span id="hud-depth" class="hud-badge">B1F</span>
+      <span class="hud-spacer"></span>
+      <button id="btn-edit-char" title="名前と性格を編集">✏️</button>
+      <button id="btn-quit" title="冒険をやめる">🏳️</button>
+    </div>
+    <div id="hud-hpbar"><div id="hud-hpfill"></div><span id="hud-hptext"></span></div>
+    <div id="hud-row2">
+      <span class="hud-chip">Lv <b id="hud-lv">1</b></span>
+      <span class="hud-chip">💰 <b id="hud-gold">0</b></span>
+      <span class="hud-chip">⚔️ <b id="hud-atk">0</b></span>
+      <span class="hud-chip">🛡️ <b id="hud-def">0</b></span>
+      <span class="hud-chip" id="hud-pet">🐕 <b id="hud-pethp">0</b></span>
+    </div>
   </div>
   <div id="log"></div>
   <div id="canvas-wrap"><canvas id="canvas"></canvas></div>

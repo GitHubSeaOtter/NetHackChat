@@ -14,6 +14,7 @@ const UI = (() => {
   let repeatDir = null;
   let holdTimer = null;
   let pendingDirCb = null;    // 方向入力待ち(投げる・杖・掘る等)
+  const cam = { x: 0, y: 0 }; // マップのドラッグスクロール量(ピクセル)。移動・休憩でリセット
 
   // 方向指定が必要な行動のために、次の方向ボタン入力を横取りする
   function requestDirection(label, cb) {
@@ -268,6 +269,18 @@ const UI = (() => {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
+  // マップ座標 → 画面ピクセル(タイル左上)。プレイヤーを中心に、cam でパンする
+  function screenLeft(w) { return w / 2 + cam.x - G.player.x * TILE - TILE / 2; }
+  function screenTop(h) { return h / 2 + cam.y - G.player.y * TILE - TILE / 2; }
+
+  function clampCam() {
+    if (!G.level) return;
+    const maxX = G.level.w * TILE / 2 + TILE;
+    const maxY = G.level.h * TILE / 2 + TILE;
+    cam.x = Math.max(-maxX, Math.min(maxX, cam.x));
+    cam.y = Math.max(-maxY, Math.min(maxY, cam.y));
+  }
+
   function draw() {
     if (!G.level) return;
     const w = canvas.width / (window.devicePixelRatio || 1);
@@ -276,22 +289,21 @@ const UI = (() => {
     ctx.fillStyle = '#0a0a0e';
     ctx.fillRect(0, 0, w, h);
 
-    const cols = Math.ceil(w / TILE), rows = Math.ceil(h / TILE);
-    const ox = G.player.x - Math.floor(cols / 2);
-    const oy = G.player.y - Math.floor(rows / 2);
+    clampCam();
+    const baseX = screenLeft(w), baseY = screenTop(h);
     ctx.font = `${TILE - 6}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
-    for (let sy = 0; sy < rows; sy++) {
-      for (let sx = 0; sx < cols; sx++) {
-        const mx = ox + sx, my = oy + sy;
-        if (!inBounds(mx, my)) continue;
+    // マップは 48x32 と小さいので全タイルを走査し、画面外はスキップ
+    for (let my = 0; my < G.level.h; my++) {
+      for (let mx = 0; mx < G.level.w; mx++) {
+        const px = baseX + mx * TILE, py = baseY + my * TILE;
+        if (px <= -TILE || py <= -TILE || px >= w || py >= h) continue;
         const idx = my * G.level.w + mx;
         if (!G.explored[idx]) continue;
         const vis = !!G.visible[idx];
         const t = G.level.t[idx];
-        const px = sx * TILE, py = sy * TILE;
         if (t === T_WALL || t === T_SDOOR) {
           // 石壁(茶系)— 隠しドアは見つけるまで壁と同じ見た目
           ctx.fillStyle = vis ? '#6e5c46' : '#3a3226';
@@ -328,11 +340,11 @@ const UI = (() => {
     }
 
     const drawGlyph = (x, y, glyph, dim) => {
-      const sx = x - ox, sy = y - oy;
-      if (sx < 0 || sy < 0 || sx >= cols || sy >= rows) return;
+      const px = baseX + x * TILE, py = baseY + y * TILE;
+      if (px <= -TILE || py <= -TILE || px >= w || py >= h) return;
       ctx.globalAlpha = dim ? 0.5 : 1;
       ctx.fillStyle = '#fff';
-      ctx.fillText(glyph, sx * TILE + TILE / 2, sy * TILE + TILE / 2 + 1);
+      ctx.fillText(glyph, px + TILE / 2, py + TILE / 2 + 1);
       ctx.globalAlpha = 1;
     };
 
@@ -350,9 +362,27 @@ const UI = (() => {
   function renderStats() {
     if (!G.player) return;
     const p = G.player;
-    $('stat-text').textContent =
-      `${G.char.name} B${G.depth}F | HP ${p.hp}/${p.maxHp} | Lv${p.level} | 💰${p.gold} | 攻${playerAtk()} 防${playerDef()}` +
-      (G.pet.alive ? ` | 🐕${G.pet.hp}` : '');
+    $('hud-name').textContent = G.char.name;
+    $('hud-depth').textContent = `B${G.depth}F`;
+    const ratio = Math.max(0, Math.min(1, p.hp / p.maxHp));
+    $('hud-hpfill').style.width = (ratio * 100) + '%';
+    // HP割合で色を変える(緑→黄→赤)
+    $('hud-hpfill').style.background =
+      ratio > 0.5 ? 'linear-gradient(90deg,#3fbf5a,#6ee089)' :
+      ratio > 0.25 ? 'linear-gradient(90deg,#d8a53e,#e8c452)' :
+      'linear-gradient(90deg,#c0392b,#e05a4a)';
+    $('hud-hptext').textContent = `HP ${p.hp} / ${p.maxHp}`;
+    $('hud-lv').textContent = p.level;
+    $('hud-gold').textContent = p.gold;
+    $('hud-atk').textContent = playerAtk();
+    $('hud-def').textContent = playerDef();
+    const pet = $('hud-pet');
+    if (G.pet.alive) {
+      pet.style.display = '';
+      $('hud-pethp').textContent = G.pet.hp;
+    } else {
+      pet.style.display = 'none';
+    }
   }
 
   function renderLog() {
@@ -369,6 +399,8 @@ const UI = (() => {
 
   function refresh() {
     if ($('screen-game').classList.contains('hidden')) return;
+    // ターン進行(移動・休憩・行動)のたびにカメラをプレイヤー中心へ戻す
+    cam.x = 0; cam.y = 0;
     renderStats();
     renderLog();
     draw();
@@ -436,20 +468,51 @@ const UI = (() => {
     });
   }
 
-  // ---------- 入力: マップタップでマス情報 ----------
+  // ---------- 入力: マップのドラッグでスクロール / タップでマス情報 ----------
   function bindCanvasTap() {
-    canvas.addEventListener('click', e => {
+    let active = false, moved = false;
+    let startX = 0, startY = 0, lastX = 0, lastY = 0, camStartX = 0, camStartY = 0;
+    const DRAG_THRESHOLD = 6; // これ以上動いたらドラッグ(=スクロール)扱い
+
+    canvas.addEventListener('pointerdown', e => {
       if (!G.level) return;
+      active = true; moved = false;
+      startX = lastX = e.clientX;
+      startY = lastY = e.clientY;
+      camStartX = cam.x; camStartY = cam.y;
+      canvas.setPointerCapture(e.pointerId);
+    });
+
+    canvas.addEventListener('pointermove', e => {
+      if (!active) return;
+      lastX = e.clientX; lastY = e.clientY;
+      if (!moved && Math.hypot(e.clientX - startX, e.clientY - startY) > DRAG_THRESHOLD) {
+        moved = true;
+        canvas.classList.add('dragging');
+      }
+      if (moved) {
+        cam.x = camStartX + (e.clientX - startX);
+        cam.y = camStartY + (e.clientY - startY);
+        draw(); // ドラッグ中はターンを消費せず再描画のみ
+      }
+    });
+
+    const finish = e => {
+      if (!active) return;
+      active = false;
+      canvas.classList.remove('dragging');
+      try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+      if (moved) return; // ドラッグだった → タップ扱いしない
+      // タップ: 押した位置のマス情報を表示(cam を考慮)
       const rect = canvas.getBoundingClientRect();
-      const w = rect.width, h = rect.height;
-      const cols = Math.ceil(w / TILE), rows = Math.ceil(h / TILE);
-      const ox = G.player.x - Math.floor(cols / 2);
-      const oy = G.player.y - Math.floor(rows / 2);
-      const mx = ox + Math.floor((e.clientX - rect.left) / TILE);
-      const my = oy + Math.floor((e.clientY - rect.top) / TILE);
+      const baseX = screenLeft(rect.width), baseY = screenTop(rect.height);
+      const mx = Math.floor((e.clientX - rect.left - baseX) / TILE);
+      const my = Math.floor((e.clientY - rect.top - baseY) / TILE);
       $('info-body').textContent = tileDescription(mx, my);
       showModal('modal-info');
-    });
+    };
+    canvas.addEventListener('pointerup', finish);
+    canvas.addEventListener('pointercancel', e => { active = false; canvas.classList.remove('dragging'); });
   }
 
   // ---------- 入力: 自由入力 ----------
@@ -575,7 +638,7 @@ const UI = (() => {
 
   document.addEventListener('DOMContentLoaded', init);
 
-  return { refresh, showBusy, hideBusy, requestDirection };
+  return { refresh, showBusy, hideBusy, requestDirection, _cam: () => cam };
 })();
 
 // ゲームエンジン(game.js)から window.UI 経由で再描画できるように公開する
