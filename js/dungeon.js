@@ -52,12 +52,13 @@ function makeItem(kind, depth) {
       return { id, kind, name: `「${label}」と書かれた巻物`, emoji: '📜', value: 60 + depth * 8 };
     }
     case 'food': {
-      return { id, kind, name: pick(FOODS), emoji: '🍖', value: 25 };
+      const spec = pick(FOODS);
+      return { id, kind, name: spec.name, emoji: '🍖', nutrition: spec.nutrition, value: 25 };
     }
     case 'weapon': {
       const cands = WEAPONS.filter(x => x.minDepth <= depth);
       const spec = cands[cands.length - 1 - ri(Math.min(2, cands.length))];
-      return { id, kind, name: spec.name, emoji: '🗡️', bonus: spec.bonus, value: 60 * spec.bonus };
+      return { id, kind, name: spec.name, emoji: '🗡️', bonus: spec.bonus, dmg: spec.dmg, value: 60 * spec.bonus };
     }
     case 'armor': {
       const cands = ARMORS.filter(x => x.minDepth <= depth);
@@ -100,7 +101,8 @@ let MON_SEQ = 1;
 function makeMonster(depth, typeId) {
   const cands = MONSTER_TYPES.filter(m => depth >= m.minDepth && depth <= m.maxDepth);
   const spec = typeId ? MONSTER_TYPES.find(m => m.id === typeId) : pick(cands.length ? cands : [MONSTER_TYPES[0]]);
-  const scale = 1 + Math.max(0, depth - spec.minDepth) * 0.12;
+  const over = Math.max(0, depth - spec.minDepth); // 出現階より深いほど強化
+  const scale = 1 + over * 0.12;
   return {
     id: MON_SEQ++,
     typeId: spec.id,
@@ -108,13 +110,14 @@ function makeMonster(depth, typeId) {
     emoji: spec.emoji,
     hp: Math.round(spec.hp * scale),
     maxHp: Math.round(spec.hp * scale),
-    atk: Math.round(spec.atk * scale),
+    atk: spec.atk + Math.floor(over / 2),
     def: spec.def,
-    xp: spec.xp,
+    dmg: [spec.dmg[0], spec.dmg[1], spec.dmg[2] + Math.floor(over / 3)],
+    xp: Math.round(spec.xp * scale),
     drop: spec.drop,
+    animal: !!spec.animal,
     erratic: !!spec.erratic,
     peaceful: false,
-    ally: false,
     scared: 0, sleep: 0,
     x: 0, y: 0,
   };
@@ -123,8 +126,8 @@ function makeMonster(depth, typeId) {
 function makeShopkeeper() {
   return {
     id: MON_SEQ++, typeId: 'keeper', name: '店主', emoji: '🧑‍💼',
-    hp: 70, maxHp: 70, atk: 14, def: 5, xp: 120, drop: 1,
-    erratic: false, peaceful: true, ally: false, scared: 0, sleep: 0, x: 0, y: 0,
+    hp: 70, maxHp: 70, atk: 14, def: 5, dmg: [2, 6, 1], xp: 120, drop: 1,
+    animal: false, erratic: false, peaceful: true, scared: 0, sleep: 0, x: 0, y: 0,
   };
 }
 
@@ -224,10 +227,11 @@ function genLevel(depth) {
     if (placeInRoom(pick(normalRooms), c)) items.push(c);
   }
 
-  // 通常モンスター
+  // 通常モンスター(NetHack 風に一部は眠った状態で生成される)
   const monCount = 3 + Math.min(8, depth) + ri(3);
   for (let i = 0; i < monCount; i++) {
     const m = makeMonster(depth);
+    if (Math.random() < 0.4) m.sleep = 999; // 近づく・攻撃されるまで眠る
     const r = pick(rooms.filter(x => x !== startRoom && x.type !== 'shop'));
     if (r && placeInRoom(r, m)) monsters.push(m);
   }

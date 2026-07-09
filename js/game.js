@@ -13,11 +13,37 @@ const G = {
   char: null, storedCharId: null,
   depth: 1, level: null,
   explored: null, visible: null,
-  player: null, pet: null,
+  player: null, pets: [],
   msgs: [], turn: 0,
   over: false, overInfo: null,
   prayedDepth: 0,
 };
+
+// ---------- 空腹(NetHack の nutrition を縮約) ----------
+const NUTRITION_MAX = 1500;
+const HUNGER_LEVELS = [
+  { id: 'satiated', min: 1001, label: '満腹' },
+  { id: 'ok',       min: 151,  label: '普通' },
+  { id: 'hungry',   min: 51,   label: '空腹' },
+  { id: 'weak',     min: 1,    label: '衰弱' },
+  { id: 'fainting', min: 0,    label: '餓死寸前' },
+];
+function hungerState(n) {
+  const v = n === undefined ? G.player.nutrition : n;
+  return HUNGER_LEVELS.find(h => v >= h.min);
+}
+function isWeakFromHunger() {
+  const id = hungerState().id;
+  return id === 'weak' || id === 'fainting';
+}
+
+// ---------- ダイス ----------
+function rollDice(d) {
+  let total = d[2];
+  for (let i = 0; i < d[0]; i++) total += 1 + Math.floor(Math.random() * d[1]);
+  return total;
+}
+function d20() { return 1 + Math.floor(Math.random() * 20); }
 
 function addMsg(text, cls) {
   G.msgs.push({ text, cls: cls || '' });
@@ -39,11 +65,16 @@ function startGame(character) {
     x: 0, y: 0,
     maxHp: 12 + s.con, hp: 12 + s.con,
     level: 1, xp: 0, gold: 20 + s.cha,
+    nutrition: 900,
     weapon: null, armor: null,
     inventory: [],
     buffAtk: null, buffDef: null,
   };
-  G.pet = { name: '相棒の子犬', emoji: '🐕', hp: 12, maxHp: 12, atk: 3, alive: true, x: 0, y: 0 };
+  G.pets = [{
+    id: 'pet0', typeId: 'dog', name: '相棒の子犬', emoji: '🐕',
+    hp: 12, maxHp: 12, atk: 2, dmg: [1, 6, 0],
+    alive: true, x: 0, y: 0, carrying: [],
+  }];
   enterLevel(1);
   addMsg(`${character.name}(${character.clazz})は子犬を連れて迷宮に足を踏み入れた。`, 'm-good');
 }
@@ -55,7 +86,7 @@ function enterLevel(depth) {
   G.visible = new Uint8Array(G.level.w * G.level.h);
   G.player.x = G.level.start.x;
   G.player.y = G.level.start.y;
-  if (G.pet.alive) placeAdjacent(G.pet, G.player.x, G.player.y);
+  for (const pt of alivePets()) placeAdjacent(pt, G.player.x, G.player.y);
   computeFov();
 }
 
@@ -83,10 +114,11 @@ function opaque(x, y) {
 }
 function monsterAt(x, y) { return G.level.monsters.find(m => m.x === x && m.y === y); }
 function itemsAt(x, y) { return G.level.items.filter(i => i.x === x && i.y === y); }
+function alivePets() { return G.pets.filter(pt => pt.alive); }
+function petAt(x, y) { return alivePets().find(pt => pt.x === x && pt.y === y); }
 function unitAt(x, y) {
   if (G.player.x === x && G.player.y === y) return G.player;
-  if (G.pet.alive && G.pet.x === x && G.pet.y === y) return G.pet;
-  return monsterAt(x, y);
+  return petAt(x, y) || monsterAt(x, y);
 }
 function roomAt(x, y) {
   return G.level.rooms.find(r => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h);
@@ -94,13 +126,31 @@ function roomAt(x, y) {
 function dist(a, b) { return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y)); }
 function removeItem(it) { G.level.items = G.level.items.filter(i => i !== it); }
 function removeMonster(m) { G.level.monsters = G.level.monsters.filter(x => x !== m); }
-function hostiles() { return G.level.monsters.filter(m => !m.peaceful && !m.ally); }
+function hostiles() { return G.level.monsters.filter(m => !m.peaceful); }
 function isVisible(x, y) { return !!G.visible[y * G.level.w + x]; }
 
-function playerAtk() {
+// ---------- 戦闘値(NetHack 風: d20 命中判定+ダイスダメージ) ----------
+const UNARMED_DMG = [1, 3, 0]; // 素手は 1d3
+
+function strDmgBonus() {
+  const str = G.char.stats.str;
+  return str >= 18 ? 2 : str >= 16 ? 1 : 0;
+}
+function playerToHit() {
   const p = G.player;
-  return 2 + Math.floor(G.char.stats.str / 3) + (p.weapon ? p.weapon.bonus : 0) +
-         Math.floor(p.level / 2) + (p.buffAtk ? p.buffAtk.amt : 0);
+  return 1 + Math.floor(p.level / 2) + Math.floor((G.char.stats.str - 8) / 4) +
+         (p.weapon ? p.weapon.bonus : 0) + (isWeakFromHunger() ? -2 : 0);
+}
+function playerDamage() {
+  const p = G.player;
+  const base = rollDice(p.weapon ? p.weapon.dmg : UNARMED_DMG);
+  return Math.max(1, base + strDmgBonus() + (p.buffAtk ? p.buffAtk.amt : 0) - (isWeakFromHunger() ? 1 : 0));
+}
+function playerAtk() {
+  // HUD 表示用のおおよその攻撃力(平均ダメージ)
+  const p = G.player;
+  const d = p.weapon ? p.weapon.dmg : UNARMED_DMG;
+  return Math.ceil(d[0] * (d[1] + 1) / 2) + d[2] + strDmgBonus() + (p.buffAtk ? p.buffAtk.amt : 0);
 }
 function playerDef() {
   const p = G.player;
@@ -139,7 +189,6 @@ function tryStep(dx, dy) {
   if (!inBounds(nx, ny)) return false;
   const m = monsterAt(nx, ny);
   if (m) {
-    if (m.ally) { addMsg(`${m.name}が場所を譲ってくれた。`); [m.x, m.y] = [p.x, p.y]; [p.x, p.y] = [nx, ny]; onEnterTile(); endTurn(); return true; }
     if (m.peaceful) {
       if (m.typeId === 'keeper') addMsg('「商品は大事に扱ってくれよ」と店主が言った。');
       else addMsg(`${m.name}は敵意がないようだ。`);
@@ -147,10 +196,11 @@ function tryStep(dx, dy) {
     }
     meleeAttack(m); endTurn(); return true;
   }
-  if (G.pet.alive && G.pet.x === nx && G.pet.y === ny) {
-    [G.pet.x, G.pet.y] = [p.x, p.y];
+  const pt = petAt(nx, ny);
+  if (pt) {
+    [pt.x, pt.y] = [p.x, p.y];
     [p.x, p.y] = [nx, ny];
-    addMsg(`${G.pet.name}と入れ替わった。`);
+    addMsg(`${pt.name}と入れ替わった。`);
     onEnterTile(); endTurn(); return true;
   }
   if (tileAt(nx, ny) === T_DOOR) {
@@ -191,12 +241,16 @@ function onEnterTile() {
 }
 
 function meleeAttack(m) {
-  const dmg = Math.max(1, playerAtk() + Math.floor(Math.random() * 3) - m.def);
   if (m.peaceful && m.typeId === 'keeper') {
     m.peaceful = false;
     addMsg('店主が激怒した! 「泥棒め!!」', 'm-warn');
   }
-  damageMonster(m, dmg, G.char.name);
+  m.sleep = 0;
+  if (d20() + playerToHit() < 9 + m.def) {
+    addMsg(`${G.char.name}の攻撃は${m.name}に当たらなかった。`);
+    return;
+  }
+  damageMonster(m, playerDamage(), G.char.name);
 }
 
 function damageMonster(m, dmg, srcName) {
@@ -212,9 +266,9 @@ function damageMonster(m, dmg, srcName) {
 
 function killMonster(m) {
   removeMonster(m);
-  if (!m.ally) gainXp(m.xp);
+  gainXp(m.xp);
   // 敵はアイテムをドロップする
-  if (!m.ally && Math.random() < m.drop) {
+  if (Math.random() < m.drop) {
     const it = Math.random() < 0.45 ? makeItem('gold', G.depth) : makeItem(randomItemKind(), G.depth);
     it.x = m.x; it.y = m.y;
     G.level.items.push(it);
@@ -222,17 +276,38 @@ function killMonster(m) {
   }
 }
 
+// NetHack 風: 次のレベルに必要な経験値は倍々で増える(L1→2: 20, L2→3: 40, …)
+function xpToNext(level) { return 10 * Math.pow(2, level); }
+
 function gainXp(n) {
   const p = G.player;
   p.xp += n;
-  while (p.xp >= p.level * 15) {
-    p.xp -= p.level * 15;
+  while (p.xp >= xpToNext(p.level)) {
+    p.xp -= xpToNext(p.level);
     p.level++;
-    const up = 4 + Math.floor(G.char.stats.con / 6);
+    // レベルアップ時の HP 上昇は 1d8+体格補正(NetHack 準拠のランダム上昇)
+    const up = Math.max(3, rollDice([1, 8, 0]) + Math.floor((G.char.stats.con - 10) / 3));
     p.maxHp += up;
     p.hp = Math.min(p.maxHp, p.hp + up);
     addMsg(`レベル${p.level}に上がった! 最大HPが${up}増えた。`, 'm-good');
   }
+}
+
+// ---------- 手懐け(敵 → ペット) ----------
+function tameMonster(m) {
+  if (m.typeId === 'keeper') {
+    addMsg('店主は鼻で笑った。「客と店主、それ以上でも以下でもないよ」');
+    return false;
+  }
+  removeMonster(m);
+  const spec = MONSTER_TYPES.find(t => t.id === m.typeId);
+  G.pets.push({
+    id: 'pet' + m.id, typeId: m.typeId, name: `仲間の${m.name}`, emoji: m.emoji,
+    hp: m.hp, maxHp: m.maxHp, atk: m.atk, dmg: (spec && spec.dmg) || [1, 4, 0],
+    alive: true, x: m.x, y: m.y, carrying: [],
+  });
+  addMsg(`${m.name}はあなたに懐いた! ペットになった。`, 'm-good');
+  return true;
 }
 
 function doWait() { if (!G.over) { addMsg('様子をうかがった。'); endTurn(); } }
@@ -265,6 +340,10 @@ function doPickup() {
 function doDescend() {
   if (G.over) return;
   if (tileAt(G.player.x, G.player.y) !== T_STAIRS) { addMsg('ここに階段はない。'); return; }
+  // NetHack 同様、近く(距離2以内)にいるペットだけが階段について来られる
+  const left = alivePets().filter(pt => dist(pt, G.player) > 2);
+  for (const pt of left) addMsg(`${pt.name}とはぐれてしまった…`, 'm-warn');
+  G.pets = alivePets().filter(pt => dist(pt, G.player) <= 2);
   enterLevel(G.depth + 1);
   G.prayedDepth = 0;
   addMsg(`地下${G.depth}階に降りた。空気が重くなってきた…`, 'm-good');
@@ -411,8 +490,14 @@ function doPray() {
     return;
   }
   G.prayedDepth++;
-  if (G.player.hp < G.player.maxHp * 0.35) {
-    G.player.hp = G.player.maxHp;
+  const p = G.player;
+  const hs = hungerState().id;
+  // NetHack の祈り: 「重大な問題」を1つだけ解決してくれる(飢え > 瀕死の順)
+  if (hs === 'weak' || hs === 'fainting') {
+    p.nutrition = 900;
+    addMsg('神は汝を憐れんだ。胃袋が温かいもので満たされた!', 'm-good');
+  } else if (p.hp < Math.max(6, Math.floor(p.maxHp / 7))) {
+    p.hp = p.maxHp;
     addMsg('神は汝を憐れんだ。全身が光に包まれ、傷が癒えた!', 'm-good');
   } else {
     addMsg('あなたは祈った。空気がわずかに温かくなった気がする。');
@@ -498,25 +583,39 @@ function throwItem(idx, dirKey) {
   unequipIfEquipped(it);
   p.inventory.splice(idx, 1); // 消費(手元から確実に離れる)
   const [dx, dy] = DIRS[dirKey];
-  let x = p.x, y = p.y, hit = null, hitPet = false;
+  let x = p.x, y = p.y, hit = null, hitPet = null;
   for (let i = 0; i < 6; i++) {
     const nx = x + dx, ny = y + dy;
     if (!walkable(nx, ny)) break;
     x = nx; y = ny;
     const m = monsterAt(x, y);
     if (m) { hit = m; break; }
-    if (G.pet.alive && G.pet.x === x && G.pet.y === y) { hitPet = true; break; }
+    const pt = petAt(x, y);
+    if (pt) { hitPet = pt; break; }
   }
   addMsg(`${itemLabel(it)}を${DIR_NAMES[dirKey]}へ投げた。`);
+  if (hit && it.kind === 'food' && hit.animal) {
+    // NetHack 風: 動物に食料を投げ与えると手懐けられる(食料は食べられて消滅)
+    hit.sleep = 0;
+    addMsg(`${hit.name}は${it.name}をぱくりと平らげた。`);
+    tameMonster(hit);
+    endTurn(); return;
+  }
+  if (hit && it.kind === 'food') {
+    addMsg(`${hit.name}は食べ物には見向きもしない。`);
+    it.x = x; it.y = y;
+    G.level.items.push(it);
+    endTurn(); return;
+  }
   if (hit) {
     if (hit.peaceful && hit.typeId === 'keeper') { hit.peaceful = false; addMsg('店主が激怒した! 「泥棒め!!」', 'm-warn'); }
     hit.sleep = 0;
     let dmg = 1;
-    if (it.kind === 'weapon') dmg = 3 + it.bonus * 2 + Math.floor(G.char.stats.str / 4);
+    if (it.kind === 'weapon') dmg = rollDice(it.dmg || [1, 4, 0]) + Math.floor(strDmgBonus() / 2);
     else if (it.kind === 'potion') dmg = 2;
     damageMonster(hit, dmg, '投擲');
   } else if (hitPet) {
-    addMsg(`わっ! ${G.pet.name}が慌てて飛びのいた。`);
+    addMsg(`わっ! ${hitPet.name}が慌てて飛びのいた。`);
   } else {
     addMsg('何にも当たらなかった。');
   }
@@ -641,10 +740,11 @@ async function useItem(idx) {
     endTurn(); return;
   }
   if (it.kind === 'food') {
+    if (p.nutrition >= NUTRITION_MAX) { addMsg('満腹でこれ以上食べられない!', 'm-warn'); return; }
     p.inventory.splice(idx, 1);
-    const heal = 4 + Math.floor(Math.random() * 5);
-    p.hp = Math.min(p.maxHp, p.hp + heal);
-    addMsg(`${it.name}を食べた。おいしい! HPが${heal}回復した。`, 'm-good');
+    p.nutrition = Math.min(NUTRITION_MAX, p.nutrition + (it.nutrition || 200));
+    const st = hungerState();
+    addMsg(`${it.name}を食べた。${st.id === 'satiated' ? 'もう満腹だ。' : 'お腹が満たされていく。'}`, 'm-good');
     endTurn(); return;
   }
   if (it.kind === 'wand') { prepareTargeted('zap', idx); return; }
@@ -755,8 +855,7 @@ function applyEffect(effect, power) {
     case 'tame_adjacent': {
       const m = hostiles().find(x => dist(x, p) <= 1);
       if (m) {
-        m.ally = true; m.peaceful = true; m.scared = 0;
-        addMsg(`${m.name}はあなたに懐いた! 仲間になった。`, 'm-good');
+        tameMonster(m);
       } else {
         addMsg('しかし隣に手なずけられる相手はいなかった。');
       }
@@ -775,8 +874,8 @@ function applyEffect(effect, power) {
       break;
     }
     case 'satiate':
-      p.hp = Math.min(p.maxHp, p.hp + 3);
-      addMsg('少し元気が出た。');
+      p.nutrition = Math.min(NUTRITION_MAX, p.nutrition + Math.max(100, pw * 20));
+      addMsg('お腹が満たされた。', 'm-good');
       break;
     case 'nothing':
     default:
@@ -841,15 +940,19 @@ function stateSummary() {
   const lines = [];
   lines.push(`迷宮: 地下${G.depth}階(ターン${G.turn})`);
   lines.push(`HP: ${p.hp}/${p.maxHp} / レベル${p.level} / 所持金${p.gold}G`);
+  lines.push(`空腹度: ${hungerState().label}(食料を食べると回復する)`);
   const here = itemsAt(p.x, p.y);
   lines.push(`足元: ${here.length ? here.map(i => i.name + (i.price ? `(価格${i.price}G)` : '')).join('、') : (tileAt(p.x, p.y) === T_STAIRS ? '下り階段' : '何もない')}`);
   const room = roomAt(p.x, p.y);
   lines.push(`現在地: ${room ? (room.type === 'shop' ? '店の中' : room.type === 'mhouse' ? 'モンスターハウス' : '部屋の中') : '通路'}`);
   const adj = G.level.monsters.filter(m => dist(m, p) <= 1);
-  lines.push(`隣接: ${adj.length ? adj.map(m => `${m.name}${m.ally ? '(仲間)' : m.peaceful ? '(友好的)' : ''}`).join('、') : 'なし'}`);
+  lines.push(`隣接: ${adj.length ? adj.map(m => `${m.name}${m.peaceful ? '(友好的)' : m.animal ? '(動物: 食料を投げると手懐けられる)' : ''}`).join('、') : 'なし'}`);
   const vis = hostiles().filter(m => isVisible(m.x, m.y) && dist(m, p) > 1);
-  lines.push(`見えている敵: ${vis.length ? vis.map(m => m.name).join('、') : 'なし'}`);
-  lines.push(`ペット: ${G.pet.alive ? `${G.pet.name}(HP ${G.pet.hp}/${G.pet.maxHp})` : '倒れてしまった'}`);
+  lines.push(`見えている敵: ${vis.length ? vis.map(m => m.name + (m.animal ? '(動物)' : '')).join('、') : 'なし'}`);
+  const pets = alivePets();
+  lines.push(`ペット: ${pets.length
+    ? pets.map(pt => `${pt.name}(HP ${pt.hp}/${pt.maxHp}${pt.carrying.length ? `、${pt.carrying.map(c => c.name).join('と')}を運搬中` : ''})`).join('、')
+    : 'いない'}`);
   const doors = adjacentTiles(t => t === T_DOOR).map(s => DIR_NAMES[s.dir]);
   if (doors.length) lines.push(`閉じたドア: ${doors.join('、')}にある`);
   if (canSellHere()) lines.push('(店の中なので sell でアイテムを売れる)');
@@ -869,18 +972,51 @@ function endTurn() {
   G.turn++;
   if (p.buffAtk && --p.buffAtk.turns <= 0) { p.buffAtk = null; addMsg('攻撃力上昇の効果が切れた。'); }
   if (p.buffDef && --p.buffDef.turns <= 0) { p.buffDef = null; addMsg('防御力上昇の効果が切れた。'); }
-  if (G.turn % 6 === 0 && p.hp < p.maxHp) p.hp++;
+
+  // 空腹の進行(毎ターン1消費。状態が悪化したら警告)
+  const prevHunger = hungerState().id;
+  p.nutrition = Math.max(0, p.nutrition - 1);
+  const hs = hungerState().id;
+  if (hs !== prevHunger) {
+    if (hs === 'hungry') addMsg('お腹が空いてきた…。', 'm-warn');
+    else if (hs === 'weak') addMsg('空腹で力が入らない…(攻撃が弱まり、自然回復も止まる)', 'm-warn');
+    else if (hs === 'fainting') addMsg('餓死しそうだ!! 今すぐ何か食べなければ!', 'm-warn');
+  }
+  if (hs === 'fainting') {
+    p.hp -= 1;
+    if (G.turn % 5 === 0) addMsg('飢えで意識が朦朧としている…', 'm-warn');
+    if (checkDeath('餓死')) return;
+  }
+
+  // 自然回復は NetHack 風にゆっくり(衰弱時は回復しない)
+  if (!isWeakFromHunger() && p.hp < p.maxHp && G.turn % Math.max(3, 12 - p.level) === 0) p.hp++;
+
+  // 時間経過でモンスターが湧く(NetHack の増援)
+  if (Math.random() < 1 / 60) spawnWanderer();
 
   for (const m of [...G.level.monsters]) {
-    if (m.ally) friendlyAct(m);
-    else monsterAct(m);
+    monsterAct(m);
     if (G.over) break;
   }
-  if (!G.over && G.pet.alive) friendlyAct(G.pet, true);
+  if (!G.over) for (const pt of alivePets()) petAct(pt);
 
   computeFov();
   checkDeath('魔物の攻撃');
   if (window.UI) UI.refresh();
+}
+
+// 視界外のどこかに増援モンスターを湧かせる
+function spawnWanderer() {
+  const m = makeMonster(G.depth);
+  for (let k = 0; k < 100; k++) {
+    const x = 1 + Math.floor(Math.random() * (G.level.w - 2));
+    const y = 1 + Math.floor(Math.random() * (G.level.h - 2));
+    if (walkable(x, y) && !unitAt(x, y) && !isVisible(x, y)) {
+      m.x = x; m.y = y;
+      G.level.monsters.push(m);
+      return;
+    }
+  }
 }
 
 function checkDeath(cause) {
@@ -925,55 +1061,93 @@ function stepRandom(u) {
 
 function attackPlayer(m) {
   const p = G.player;
-  const dmg = Math.max(0, m.atk + Math.floor(Math.random() * 3) - 1 - playerDef());
-  if (dmg <= 0) { addMsg(`${m.name}の攻撃をかわした!`); return; }
+  if (d20() + m.atk < 9 + playerDef()) { addMsg(`${m.name}の攻撃をかわした!`); return; }
+  const dmg = Math.max(1, rollDice(m.dmg) - Math.floor(playerDef() / 3));
   p.hp -= dmg;
   addMsg(`${m.name}の攻撃! ${dmg}のダメージ。`, 'm-warn');
 }
 
-function attackPet(m) {
-  const dmg = Math.max(1, m.atk + Math.floor(Math.random() * 2) - 1);
-  G.pet.hp -= dmg;
-  if (G.pet.hp <= 0) {
-    G.pet.alive = false;
-    addMsg(`${G.pet.name}は${m.name}に倒されてしまった…`, 'm-warn');
+function attackPet(m, pt) {
+  if (d20() + m.atk < 9) { addMsg(`${pt.name}は${m.name}の攻撃をかわした。`); return; }
+  const dmg = Math.max(1, rollDice(m.dmg));
+  pt.hp -= dmg;
+  if (pt.hp <= 0) {
+    pt.alive = false;
+    petDropAll(pt);
+    addMsg(`${pt.name}は${m.name}に倒されてしまった…`, 'm-warn');
   } else {
-    addMsg(`${m.name}が${G.pet.name}に${dmg}のダメージ!`, 'm-warn');
+    addMsg(`${m.name}が${pt.name}に${dmg}のダメージ!`, 'm-warn');
   }
 }
 
+// ペットが倒れたら、くわえていた物をその場に落とす
+function petDropAll(pt) {
+  for (const it of pt.carrying) {
+    it.x = pt.x; it.y = pt.y;
+    G.level.items.push(it);
+  }
+  pt.carrying = [];
+}
+
 function monsterAct(m) {
-  if (m.sleep > 0) { m.sleep--; return; }
-  if (m.peaceful) return;
   const p = G.player;
+  if (m.sleep > 0) {
+    // 眠っている敵は、隣接されるか近くで動かれると目を覚ますことがある
+    if (dist(m, p) <= 1 && Math.random() < 0.5) { m.sleep = 0; if (isVisible(m.x, m.y)) addMsg(`${m.name}が目を覚ました!`, 'm-warn'); }
+    else if (isVisible(m.x, m.y) && dist(m, p) <= 5 && Math.random() < 0.25) { m.sleep = 0; addMsg(`${m.name}が目を覚ました!`, 'm-warn'); }
+    else m.sleep--;
+    return; // 目覚めたターンは行動しない
+  }
+  if (m.peaceful) return;
   if (m.scared > 0) { m.scared--; stepAway(m, p.x, p.y); return; }
   if (m.erratic && Math.random() < 0.5) { stepRandom(m); return; }
 
-  const petAdj = G.pet.alive && dist(m, G.pet) <= 1;
+  const adjPet = alivePets().find(pt => dist(m, pt) <= 1);
   const playerAdj = dist(m, p) <= 1;
-  if (playerAdj && (!petAdj || Math.random() < 0.6)) { attackPlayer(m); return; }
-  if (petAdj) { attackPet(m); return; }
-
-  const allyAdj = G.level.monsters.find(a => a.ally && dist(m, a) <= 1);
-  if (allyAdj) { damageMonster(allyAdj, Math.max(1, m.atk - allyAdj.def), m.name); return; }
+  if (playerAdj && (!adjPet || Math.random() < 0.6)) { attackPlayer(m); return; }
+  if (adjPet) { attackPet(m, adjPet); return; }
 
   if (dist(m, p) <= 8 && los(m.x, m.y, p.x, p.y)) { stepToward(m, p.x, p.y); return; }
   if (Math.random() < 0.3) stepRandom(m);
 }
 
-function friendlyAct(u, isPet) {
+// ---------- ペットの行動: 戦闘 > 拾う > 落とす > 追従 ----------
+function petAct(pt) {
   const p = G.player;
   const target = hostiles()
-    .filter(m => dist(m, u) <= 6 && los(u.x, u.y, m.x, m.y))
-    .sort((a, b) => dist(a, u) - dist(b, u))[0];
-  if (target && dist(target, u) <= 1) {
-    const dmg = Math.max(1, (u.atk || 3) + Math.floor(Math.random() * 2) - target.def);
-    damageMonster(target, dmg, isPet ? G.pet.name : u.name);
+    .filter(m => dist(m, pt) <= 6 && los(pt.x, pt.y, m.x, m.y))
+    .sort((a, b) => dist(a, pt) - dist(b, pt))[0];
+  if (target && dist(target, pt) <= 1) {
+    target.sleep = 0;
+    if (d20() + pt.atk < 9 + target.def) {
+      if (isVisible(pt.x, pt.y)) addMsg(`${pt.name}の攻撃は外れた。`);
+      return;
+    }
+    damageMonster(target, Math.max(1, rollDice(pt.dmg)), pt.name);
     return;
   }
-  if (target) { stepToward(u, target.x, target.y); return; }
-  if (dist(u, p) > 2) stepToward(u, p.x, p.y);
-  else if (Math.random() < 0.4) stepRandom(u);
+  if (target) { stepToward(pt, target.x, target.y); return; }
+
+  // 床の物をくわえる(宝箱・金貨・店の商品は対象外)
+  const here = itemsAt(pt.x, pt.y).filter(i => i.kind !== 'chest' && i.kind !== 'gold' && !i.price);
+  if (here.length && pt.carrying.length < 2 && Math.random() < 0.35) {
+    const it = here[0];
+    removeItem(it);
+    pt.carrying.push(it);
+    if (isVisible(pt.x, pt.y)) addMsg(`${pt.name}は${it.name}をくわえた。`);
+    return;
+  }
+  // くわえた物を落とす(飼い主のそばでは落としやすい)
+  if (pt.carrying.length && Math.random() < (dist(pt, p) <= 1 ? 0.25 : 0.05)) {
+    const it = pt.carrying.shift();
+    it.x = pt.x; it.y = pt.y;
+    G.level.items.push(it);
+    if (isVisible(pt.x, pt.y)) addMsg(`${pt.name}は${it.name}をぽとりと落とした。`, dist(pt, p) <= 1 ? 'm-good' : '');
+    return;
+  }
+
+  if (dist(pt, p) > 2) stepToward(pt, p.x, p.y);
+  else if (Math.random() < 0.4) stepRandom(pt);
 }
 
 // ---------- リピート移動(道なり) ----------
@@ -995,7 +1169,7 @@ function travelStep(dirKey) {
   if (G.over) return { cont: false, dir: dirKey };
   let nd = dirKey;
   let [dx, dy] = DIRS[nd];
-  const blocked = (x, y) => !walkable(x, y) || monsterAt(x, y) || (G.pet.alive && G.pet.x === x && G.pet.y === y);
+  const blocked = (x, y) => !walkable(x, y) || monsterAt(x, y) || petAt(x, y);
   if (blocked(G.player.x + dx, G.player.y + dy)) {
     const alt = corridorTurn(nd);
     if (!alt) return { cont: false, dir: nd };
@@ -1030,12 +1204,17 @@ function tileDescription(x, y) {
     if (room.type === 'shop') lines.push('🏪 ここは店の中。値札付きの商品は購入が必要。');
     if (room.type === 'mhouse') lines.push('⚠️ モンスターハウスの中!');
   }
-  if (G.player.x === x && G.player.y === y) lines.push(`🧙 ${G.char.name}(あなた) HP ${G.player.hp}/${G.player.maxHp}`);
-  if (G.pet.alive && G.pet.x === x && G.pet.y === y) lines.push(`🐕 ${G.pet.name} HP ${G.pet.hp}/${G.pet.maxHp}`);
+  if (G.player.x === x && G.player.y === y) lines.push(`🧙 ${G.char.name}(あなた) HP ${G.player.hp}/${G.player.maxHp} / ${hungerState().label}`);
+  const pt = petAt(x, y);
+  if (pt) {
+    lines.push(`${pt.emoji} ${pt.name}(ペット) HP ${pt.hp}/${pt.maxHp}` +
+      (pt.carrying.length ? ` / ${pt.carrying.map(c => c.name).join('と')}をくわえている` : ''));
+  }
   const m = monsterAt(x, y);
   if (m && G.visible[idx]) {
-    const rel = m.ally ? '仲間' : m.peaceful ? '友好的' : '敵対';
-    lines.push(`${m.emoji} ${m.name}(${rel}) HP ${m.hp}/${m.maxHp} / 攻撃${m.atk} 防御${m.def}`);
+    const rel = m.peaceful ? '友好的' : '敵対';
+    lines.push(`${m.emoji} ${m.name}(${rel}${m.animal ? '・動物' : ''}) HP ${m.hp}/${m.maxHp}` +
+      (m.sleep > 0 ? ' / 眠っている' : ''));
   }
   for (const it of itemsAt(x, y)) {
     lines.push(`${it.emoji} ${it.name}${it.price ? `(価格 ${it.price}G)` : ''}`);
