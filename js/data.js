@@ -2,17 +2,18 @@
 // ゲームデータ定義(モンスター・アイテム・ランダム生成用テーブル)
 // ============================================================
 
+// atk=命中補正(d20に加算) / dmg=[ダイス数, 面数, 修正] / animal=食料を投げると手懐け可能
 const MONSTER_TYPES = [
-  { id: 'rat',    name: 'ドブネズミ', emoji: '🐀', hp: 4,  atk: 2,  def: 0, xp: 2,  minDepth: 1, maxDepth: 3,  drop: 0.20 },
-  { id: 'bat',    name: 'コウモリ',   emoji: '🦇', hp: 5,  atk: 2,  def: 0, xp: 3,  minDepth: 1, maxDepth: 4,  drop: 0.15, erratic: true },
-  { id: 'snake',  name: 'ヘビ',       emoji: '🐍', hp: 7,  atk: 3,  def: 1, xp: 5,  minDepth: 2, maxDepth: 5,  drop: 0.20 },
-  { id: 'goblin', name: 'ゴブリン',   emoji: '👺', hp: 9,  atk: 4,  def: 1, xp: 7,  minDepth: 2, maxDepth: 6,  drop: 0.35 },
-  { id: 'zombie', name: 'ゾンビ',     emoji: '🧟', hp: 12, atk: 4,  def: 2, xp: 9,  minDepth: 3, maxDepth: 7,  drop: 0.30 },
-  { id: 'wolf',   name: 'オオカミ',   emoji: '🐺', hp: 14, atk: 6,  def: 2, xp: 12, minDepth: 4, maxDepth: 8,  drop: 0.25 },
-  { id: 'orc',    name: 'オーク',     emoji: '👹', hp: 18, atk: 7,  def: 3, xp: 16, minDepth: 5, maxDepth: 9,  drop: 0.40 },
-  { id: 'ghost',  name: 'ゴースト',   emoji: '👻', hp: 15, atk: 6,  def: 4, xp: 18, minDepth: 6, maxDepth: 10, drop: 0.20 },
-  { id: 'troll',  name: 'トロル',     emoji: '🗿', hp: 26, atk: 9,  def: 4, xp: 26, minDepth: 7, maxDepth: 12, drop: 0.40 },
-  { id: 'dragon', name: 'ドラゴン',   emoji: '🐉', hp: 40, atk: 12, def: 6, xp: 50, minDepth: 9, maxDepth: 99, drop: 0.80 },
+  { id: 'rat',    name: 'ドブネズミ', emoji: '🐀', hp: 4,  atk: 2,  def: 0, xp: 2,  minDepth: 1, maxDepth: 3,  drop: 0.20, dmg: [1, 3, 0], animal: true },
+  { id: 'bat',    name: 'コウモリ',   emoji: '🦇', hp: 5,  atk: 2,  def: 0, xp: 3,  minDepth: 1, maxDepth: 4,  drop: 0.15, dmg: [1, 4, 0], animal: true, erratic: true },
+  { id: 'snake',  name: 'ヘビ',       emoji: '🐍', hp: 7,  atk: 3,  def: 1, xp: 5,  minDepth: 2, maxDepth: 5,  drop: 0.20, dmg: [1, 4, 1], animal: true },
+  { id: 'goblin', name: 'ゴブリン',   emoji: '👺', hp: 9,  atk: 4,  def: 1, xp: 7,  minDepth: 2, maxDepth: 6,  drop: 0.35, dmg: [1, 6, 0] },
+  { id: 'zombie', name: 'ゾンビ',     emoji: '🧟', hp: 12, atk: 4,  def: 2, xp: 9,  minDepth: 3, maxDepth: 7,  drop: 0.30, dmg: [1, 6, 1] },
+  { id: 'wolf',   name: 'オオカミ',   emoji: '🐺', hp: 14, atk: 6,  def: 2, xp: 12, minDepth: 4, maxDepth: 8,  drop: 0.25, dmg: [2, 4, 0], animal: true },
+  { id: 'orc',    name: 'オーク',     emoji: '👹', hp: 18, atk: 7,  def: 3, xp: 16, minDepth: 5, maxDepth: 9,  drop: 0.40, dmg: [1, 8, 1] },
+  { id: 'ghost',  name: 'ゴースト',   emoji: '👻', hp: 15, atk: 6,  def: 4, xp: 18, minDepth: 6, maxDepth: 10, drop: 0.20, dmg: [1, 6, 0] },
+  { id: 'troll',  name: 'トロル',     emoji: '🗿', hp: 26, atk: 9,  def: 4, xp: 26, minDepth: 7, maxDepth: 12, drop: 0.40, dmg: [2, 6, 1] },
+  { id: 'dragon', name: 'ドラゴン',   emoji: '🐉', hp: 40, atk: 12, def: 6, xp: 50, minDepth: 9, maxDepth: 99, drop: 0.80, dmg: [3, 8, 0] },
 ];
 
 const POTION_LOOKS = ['赤い', '青い', '緑の', '黄色い', '紫の', '乳白色の', '黒い', '虹色の', '泡立つ', '濁った'];
@@ -39,12 +40,13 @@ const KIND_LABELS = {
   food: '食料', wand: '杖', tool: '道具', gold: '金貨', chest: '宝箱',
 };
 
+// bonus=命中補正 / dmg=ダメージダイス(NetHack の武器ダイスに準拠)
 const WEAPONS = [
-  { name: 'ダガー',         bonus: 1, minDepth: 1 },
-  { name: 'ショートソード', bonus: 2, minDepth: 2 },
-  { name: 'メイス',         bonus: 3, minDepth: 4 },
-  { name: 'ロングソード',   bonus: 4, minDepth: 6 },
-  { name: 'バトルアックス', bonus: 5, minDepth: 8 },
+  { name: 'ダガー',         bonus: 1, dmg: [1, 4, 0], minDepth: 1 },
+  { name: 'ショートソード', bonus: 2, dmg: [1, 6, 0], minDepth: 2 },
+  { name: 'メイス',         bonus: 3, dmg: [1, 6, 1], minDepth: 4 },
+  { name: 'ロングソード',   bonus: 4, dmg: [1, 8, 0], minDepth: 6 },
+  { name: 'バトルアックス', bonus: 5, dmg: [1, 8, 2], minDepth: 8 },
 ];
 const ARMORS = [
   { name: '革の鎧',           bonus: 1, minDepth: 1 },
@@ -52,7 +54,14 @@ const ARMORS = [
   { name: 'チェインメイル',   bonus: 3, minDepth: 5 },
   { name: 'プレートメイル',   bonus: 4, minDepth: 8 },
 ];
-const FOODS = ['食料の缶詰', '干し肉', 'リンゴ', 'ハードチーズ', '謎のクッキー'];
+// nutrition=食べたときに回復する栄養(NetHack の nutrition 値を参考に縮約)
+const FOODS = [
+  { name: '食料の缶詰',   nutrition: 600 },
+  { name: '干し肉',       nutrition: 400 },
+  { name: 'リンゴ',       nutrition: 100 },
+  { name: 'ハードチーズ', nutrition: 300 },
+  { name: '謎のクッキー', nutrition: 90 },
+];
 
 // 自由入力・アイテム判定でAIが使える効果の一覧(エンジン側と対応)
 const EFFECT_IDS = [

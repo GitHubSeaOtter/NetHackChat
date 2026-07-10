@@ -149,6 +149,10 @@ input, textarea {
   padding: 4px 9px;
 }
 .hud-chip b { font-size: 15px; color: #fff; font-weight: 700; }
+.hud-chip.warn { border-color: #b07a2a; }
+.hud-chip.warn b { color: #ffb04a; }
+.hud-chip.danger { border-color: #b03444; }
+.hud-chip.danger b { color: #ff6a5a; }
 
 #log {
   height: 88px;
@@ -170,10 +174,12 @@ input, textarea {
 
 #controls {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   padding: 8px 10px;
   background: #16161c;
   border-top: 1px solid #26262e;
+  justify-content: center; /* D-pad を中央、左右にアクション列 */
+  align-items: center;
 }
 #dpad {
   display: grid;
@@ -182,13 +188,14 @@ input, textarea {
   gap: 4px;
 }
 #dpad button { padding: 0; font-size: 18px; border-radius: 8px; user-select: none; -webkit-user-select: none; }
-#action-buttons {
-  flex: 1;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+.action-col {
+  display: flex;
+  flex-direction: column;
   gap: 6px;
+  width: 86px;
+  max-width: 24vw;
 }
-#action-buttons button { padding: 6px 4px; font-size: 13px; }
+.action-col button { padding: 9px 4px; font-size: 13px; }
 
 #freeform-bar {
   display: flex;

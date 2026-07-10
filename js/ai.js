@@ -64,6 +64,7 @@ const JUDGE_SYSTEM = `あなたはローグライクRPG「NetHackChat」のゲ�
    - 移動、方向を指定した攻撃・体当たり: command="move"(direction を8方位で指定。移動先に敵がいれば攻撃になる)
    - アイテムを使う/飲む/読む/食べる/装備する: command="use_item"(item_index=所持品リストの番号)
    - アイテムを投げる: command="throw"(item_index 必須。「北に投げる」のように方向が明示されていれば direction を設定し、無ければ "none" のままにする=ゲーム側がプレイヤーに方向入力を求める)
+   - 動物(ドブネズミ・コウモリ・ヘビ・オオカミ等)に食料を与えて手懐ける: command="throw"(item_index=食料の番号。動物に命中すると食べてペットになる)
    - 杖を振る/杖を使う([杖]タグのアイテム): command="zap"(item_index 必須。方向の扱いは throw と同じ)
    - アイテムを捨てる/置く: command="drop"(item_index)
    - 店でアイテムを売る: command="sell"(item_index)
@@ -84,7 +85,12 @@ const JUDGE_SYSTEM = `あなたはローグライクRPG「NetHackChat」のゲ�
 3. 意味が読み取れない入力は kind="invalid" にし、narration で短く聞き返す。
 
 # effects で使える effect 値
-heal(HP回復) / damage_self(自分がダメージ) / damage_adjacent(隣接する敵にダメージ) / damage_visible(見えている敵全体にダメージ) / teleport(ランダム転移) / reveal_map(フロア全体を明らかに) / spawn_item(足元にアイテム出現) / spawn_monster(敵が出現) / buff_attack(攻撃力上昇) / buff_defense(防御力上昇) / scare_enemies(敵が怯えて逃げる) / tame_adjacent(隣接する敵を仲間にする) / gain_gold(金貨入手) / lose_gold(金貨喪失) / satiate(小回復・満足) / nothing(何も起きない)
+heal(HP回復) / damage_self(自分がダメージ) / damage_adjacent(隣接する敵にダメージ) / damage_visible(見えている敵全体にダメージ) / teleport(ランダム転移) / reveal_map(フロア全体を明らかに) / spawn_item(足元にアイテム出現) / spawn_monster(敵が出現) / buff_attack(攻撃力上昇) / buff_defense(防御力上昇) / scare_enemies(敵が怯えて逃げる) / tame_adjacent(隣接する敵をペットにする) / gain_gold(金貨入手) / lose_gold(金貨喪失) / satiate(空腹が満たされる) / nothing(何も起きない)
+
+# ゲームのルール知識
+- プレイヤーには空腹度(満腹/普通/空腹/衰弱/餓死寸前)があり、食料([食料]タグ)を食べると回復する。衰弱以下では攻撃が弱まり自然回復が止まる。
+- ペットは複数連れられる。敵の動物に食料を投げ与える(throw)か、tame_adjacent 効果で手懐けられる。ペットは床の物をくわえたり落としたりする。
+- tame_adjacent は魔法や説得などの創造的な手懐け表現に使ってよいが、乱発を避け、失敗(nothing)も混ぜること。
 
 # 注意
 - 使わないフィールドには command="none", direction="none", item_index=-1, effects=[] を入れる。
@@ -98,6 +104,7 @@ const ITEM_SYSTEM = `あなたはローグライクRPG「NetHackChat」のアイ
 # ガイドライン
 - ポーション(飲む)の典型: heal / damage_self / buff_attack / buff_defense / teleport / satiate / nothing
 - 巻物(読む)の典型: reveal_map / teleport / scare_enemies / spawn_monster / gain_gold / nothing
+- satiate は空腹度を回復する効果(HPは回復しない)。プレイヤーが空腹・衰弱のときのポーションに向く。
 - おおよそ7割は有益、3割は不利かハズレにする。プレイヤーが瀕死のときは少しだけ慈悲深く。
 - power の目安: 小=1〜5, 中=6〜12, 大=13〜20。20 を超えてはならない。
 - item_true_name は「体力回復のポーション」「地図の巻物」のような正体の名前。

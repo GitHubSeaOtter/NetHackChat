@@ -40,23 +40,26 @@
       <span class="hud-chip">💰 <b id="hud-gold">0</b></span>
       <span class="hud-chip">⚔️ <b id="hud-atk">0</b></span>
       <span class="hud-chip">🛡️ <b id="hud-def">0</b></span>
-      <span class="hud-chip" id="hud-pet">🐕 <b id="hud-pethp">0</b></span>
+      <span class="hud-chip" id="hud-hunger">🍗 <b id="hud-hunger-text">普通</b></span>
+      <span class="hud-chip" id="hud-pet">🐾 <b id="hud-pethp">0</b></span>
     </div>
   </div>
   <div id="log"></div>
   <div id="canvas-wrap"><canvas id="canvas"></canvas></div>
   <div id="controls">
+    <div class="action-col" id="action-left">
+      <button id="btn-descend">降りる</button>
+      <button id="btn-search">調べる</button>
+    </div>
     <div id="dpad">
       <button data-dir="nw">↖</button><button data-dir="n">↑</button><button data-dir="ne">↗</button>
       <button data-dir="w">←</button><button data-dir="wait">・</button><button data-dir="e">→</button>
       <button data-dir="sw">↙</button><button data-dir="s">↓</button><button data-dir="se">↘</button>
     </div>
-    <div id="action-buttons">
-      <button id="btn-pickup">拾う</button>
+    <div class="action-col" id="action-right">
       <button id="btn-inventory">持ち物</button>
+      <button id="btn-pickup">拾う</button>
       <button id="btn-open">開ける</button>
-      <button id="btn-descend">降りる</button>
-      <button id="btn-search">調べる</button>
     </div>
   </div>
   <div id="freeform-bar">

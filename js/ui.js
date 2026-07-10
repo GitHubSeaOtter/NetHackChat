@@ -355,7 +355,9 @@ const UI = (() => {
     for (const m of G.level.monsters) {
       if (isVisible(m.x, m.y)) drawGlyph(m.x, m.y, m.emoji, false);
     }
-    if (G.pet.alive && isVisible(G.pet.x, G.pet.y)) drawGlyph(G.pet.x, G.pet.y, G.pet.emoji, false);
+    for (const pt of alivePets()) {
+      if (isVisible(pt.x, pt.y)) drawGlyph(pt.x, pt.y, pt.emoji, false);
+    }
     drawGlyph(G.player.x, G.player.y, '🧙', false);
   }
 
@@ -376,10 +378,16 @@ const UI = (() => {
     $('hud-gold').textContent = p.gold;
     $('hud-atk').textContent = playerAtk();
     $('hud-def').textContent = playerDef();
+    // 空腹度: 状態名を表示し、危険度で色を変える
+    const hs = hungerState();
+    $('hud-hunger-text').textContent = hs.label;
+    $('hud-hunger').className = 'hud-chip' +
+      (hs.id === 'hungry' ? ' warn' : (hs.id === 'weak' || hs.id === 'fainting') ? ' danger' : '');
     const pet = $('hud-pet');
-    if (G.pet.alive) {
+    const pets = alivePets();
+    if (pets.length) {
       pet.style.display = '';
-      $('hud-pethp').textContent = G.pet.hp;
+      $('hud-pethp').textContent = pets.length === 1 ? pets[0].hp : `${pets.length}匹`;
     } else {
       pet.style.display = 'none';
     }
